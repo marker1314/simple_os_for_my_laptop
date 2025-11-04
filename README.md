@@ -4,86 +4,86 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-x86__64-lightgrey.svg)](https://en.wikipedia.org/wiki/X86-64)
 
-Rust로 작성된 초저전력 노트북 운영체제 커널 프로젝트입니다. 리눅스 커널과 완전히 독립적인 구현으로, 노트북 환경에 최적화된 전력 관리를 목표로 합니다.
+A low-power laptop operating system kernel written in Rust. This is a completely independent implementation from the Linux kernel, optimized for laptop environments with a focus on power management.
 
-## 📋 목차
+## 📋 Table of Contents
 
-- [특징](#-특징)
-- [목표](#-목표)
-- [시작하기](#-시작하기)
-- [요구사항](#-요구사항)
-- [빌드 및 실행](#-빌드-및-실행)
-- [프로젝트 구조](#-프로젝트-구조)
-- [개발 로드맵](#-개발-로드맵)
-- [기여하기](#-기여하기)
-- [라이선스](#-라이선스)
-- [참고 자료](#-참고-자료)
+- [Features](#-features)
+- [Goals](#-goals)
+- [Getting Started](#-getting-started)
+- [Requirements](#-requirements)
+- [Build and Run](#-build-and-run)
+- [Project Structure](#-project-structure)
+- [Development Roadmap](#-development-roadmap)
+- [Contributing](#-contributing)
+- [License](#-license)
+- [References](#-references)
 
-## ✨ 특징
+## ✨ Features
 
-- **메모리 안전성**: Rust의 타입 시스템과 메모리 안전성 보장으로 커널 레벨 버그 최소화
-- **초저전력 설계**: ACPI 기반 전력 관리 및 동적 CPU 클럭 스케일링
-- **독립적 구현**: 리눅스 커널과 완전히 독립적인 커널 설계
-- **모듈형 아키텍처**: 확장 가능하고 유지보수하기 쉬운 구조
-- **no_std 환경**: 표준 라이브러리 없이 실행되는 경량 커널
+- **Memory Safety**: Minimizes kernel-level bugs through Rust's type system and memory safety guarantees
+- **Ultra-Low Power Design**: ACPI-based power management and dynamic CPU clock scaling
+- **Independent Implementation**: Completely independent kernel design from Linux
+- **Modular Architecture**: Extensible and maintainable structure
+- **no_std Environment**: Lightweight kernel running without the standard library
 
-## 🎯 목표
+## 🎯 Goals
 
-### 기능적 목표
-- 독립적인 운영체제 커널 구현
-- 기본 드라이버 지원 (키보드, 디스플레이, 저장장치, 네트워크)
-- 전력 관리 시스템 (ACPI 파싱, 동적 스케일링)
-- 기본 Shell 및 GUI 시스템
-- 파일시스템 지원 (FAT32)
+### Functional Goals
+- Independent operating system kernel implementation
+- Basic driver support (keyboard, display, storage, network)
+- Power management system (ACPI parsing, dynamic scaling)
+- Basic Shell and GUI system
+- Filesystem support (FAT32)
 
-### 비기능적 목표
-- **부팅 시간**: 5초 이내
-- **유휴 전력 소비**: 5W 이하
-- **메모리 사용량**: 최소 64MB RAM에서 동작 (권장: 512MB 이상)
-- **안정성**: 커널 패닉 없는 장시간 운영
+### Non-Functional Goals
+- **Boot Time**: Under 5 seconds
+- **Idle Power Consumption**: Under 5W
+- **Memory Usage**: Minimum 64MB RAM (Recommended: 512MB or more)
+- **Stability**: Long-term operation without kernel panics
 
-## 🚀 시작하기
+## 🚀 Getting Started
 
-### 요구사항
+### Requirements
 
-#### 필수 도구
+#### Essential Tools
 - **Rust (nightly)**: `rustup install nightly`
 - **bootimage**: `cargo install bootimage`
-- **QEMU**: 가상화 환경에서 테스트하기 위함
+- **QEMU**: For testing in a virtualized environment
 
 #### Windows
 ```powershell
-# Rust 설치
+# Install Rust
 winget install Rustlang.Rustup
 rustup install nightly
 rustup default nightly
 
-# 필수 컴포넌트
+# Essential components
 rustup component add rust-src llvm-tools-preview
 rustup target add x86_64-unknown-none
 
-# bootimage 설치
+# Install bootimage
 cargo install bootimage
 
-# QEMU 설치 (선택사항)
+# Install QEMU (optional)
 winget install SoftwareFreedomConservancy.QEMU
 ```
 
 #### Linux
 ```bash
-# Rust 설치
+# Install Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 rustup install nightly
 rustup default nightly
 
-# 필수 컴포넌트
+# Essential components
 rustup component add rust-src llvm-tools-preview
 rustup target add x86_64-unknown-none
 
-# bootimage 설치
+# Install bootimage
 cargo install bootimage
 
-# QEMU 및 기타 도구 설치
+# Install QEMU and other tools
 sudo apt-get update
 sudo apt-get install -y \
     build-essential \
@@ -93,315 +93,330 @@ sudo apt-get install -y \
     ovmf
 ```
 
-### 빌드 및 실행
+### Build and Run
 
-#### 1. 저장소 클론
+#### 1. Clone Repository
 ```bash
 git clone https://github.com/yourusername/simple_os_for_my_laptop.git
 cd simple_os_for_my_laptop
 ```
 
-#### 2. 커널 빌드
+#### 2. Build Kernel
 ```bash
-# 디버그 빌드
+# Debug build
 cargo build
 
-# 부팅 이미지 생성
+# Generate boot image
 cargo bootimage
 
-# 릴리즈 빌드 (최적화)
+# Release build (optimized)
 cargo build --release
 cargo bootimage --release
 ```
 
-#### 3. QEMU에서 실행
+#### 3. Run in QEMU
 ```bash
-# 기본 실행
+# Basic execution
 qemu-system-x86_64 \
     -drive format=raw,file=target/x86_64-unknown-none/debug/bootimage-simple_os.bin \
     -serial stdio \
     -display none
 
-# 또는 스크립트 사용 (Linux/macOS)
+# Or use script (Linux/macOS)
 ./run.sh
 
-# Windows에서는
+# On Windows
 .\run.bat
 ```
 
-#### 4. 디버깅 모드
+#### 4. Debug Mode
 ```bash
-# QEMU를 GDB 서버 모드로 실행
+# Run QEMU in GDB server mode
 qemu-system-x86_64 \
     -s -S \
     -drive format=raw,file=target/x86_64-unknown-none/debug/bootimage-simple_os.bin \
     -serial stdio
 
-# 별도 터미널에서 GDB 연결
+# Connect GDB from separate terminal
 rust-gdb target/x86_64-unknown-none/debug/simple_os
 (gdb) target remote :1234
 ```
 
-## 📁 프로젝트 구조
+## 📁 Project Structure
 
 ```
 simple_os_for_my_laptop/
-├── Cargo.toml              # 프로젝트 설정 및 의존성
-├── Cargo.lock              # 의존성 버전 고정
-├── README.md               # 프로젝트 소개 (이 파일)
-├── roadmap.md              # 상세 개발 로드맵
-├── LICENSE                 # 라이선스 파일
+├── Cargo.toml              # Project configuration and dependencies
+├── Cargo.lock              # Dependency version lock
+├── README.md               # Project introduction (this file)
+├── roadmap.md              # Detailed development roadmap
+├── LICENSE                 # License file
 ├── .cargo/
-│   └── config.toml         # Cargo 설정
+│   └── config.toml         # Cargo configuration
 ├── src/
-│   ├── main.rs            # 커널 엔트리 포인트
-│   ├── lib.rs             # 라이브러리 루트
-│   ├── boot/              # 부트로더 인터페이스
-│   ├── memory/            # 메모리 관리
-│   │   ├── mod.rs         # 메모리 관리 모듈 통합
-│   │   ├── map.rs         # 메모리 맵 파싱 및 분류
-│   │   ├── frame.rs       # 물리 메모리 프레임 할당자
-│   │   ├── paging.rs      # 가상 메모리 및 페이지 테이블 관리
-│   │   └── heap.rs        # 힙 할당자 (linked_list_allocator)
-│   ├── scheduler/         # 프로세스/스레드 스케줄러
-│   │   ├── mod.rs         # 스케줄러 모듈 통합
-│   │   ├── thread.rs       # 스레드 구조 및 컨텍스트 관리
-│   │   ├── round_robin.rs  # Round-Robin 스케줄러 구현
-│   │   └── context_switch.rs # 컨텍스트 스위칭 구현
-│   ├── power/             # 전력 관리
-│   │   ├── mod.rs         # 전력 관리 모듈 통합
-│   │   ├── manager.rs     # 전력 관리자
-│   │   ├── acpi.rs        # ACPI 파싱
-│   │   ├── scaling.rs     # 동적 스케일링
-│   │   └── policy.rs      # 전력 정책 관리
-│   ├── drivers/           # 하드웨어 드라이버
-│   │   ├── keyboard.rs    # 키보드 드라이버
-│   │   ├── vga.rs         # VGA 디스플레이
-│   │   ├── timer.rs       # 타이머
-│   │   ├── serial.rs      # 시리얼 포트
-│   │   ├── ata.rs         # ATA/SATA 저장장치 드라이버
-│   │   ├── pci.rs         # PCI 버스 드라이버
-│   │   └── rtl8139.rs     # RTL8139 이더넷 드라이버
-│   ├── interrupts/        # 인터럽트 핸들러
-│   ├── logging.rs         # 로깅 시스템
-│   ├── sync/              # 동기화 프리미티브
-│   ├── syscall/           # 시스템 콜 인터페이스
-│   │   ├── mod.rs         # 시스템 콜 모듈 통합
-│   │   ├── numbers.rs     # 시스템 콜 번호 정의
-│   │   ├── handler.rs     # 시스템 콜 핸들러
-│   │   ├── dispatcher.rs  # 시스템 콜 디스패처
-│   │   └── implementations.rs # 시스템 콜 구현
-│   ├── shell/             # Shell 인터페이스
-│   │   ├── mod.rs         # Shell 메인 로직
-│   │   └── command.rs     # 명령어 처리
-│   ├── fs/                # 파일시스템 인터페이스
-│   │   ├── mod.rs         # 파일시스템 모듈 통합
-│   │   ├── vfs.rs         # 가상 파일시스템 (VFS) 인터페이스
-│   │   └── fat32.rs       # FAT32 파일시스템 구현
-│   └── net/               # 네트워크 스택
-│       ├── mod.rs         # 네트워크 모듈 통합
-│       ├── ethernet.rs    # 이더넷 드라이버 인터페이스
-│       └── driver.rs      # 네트워크 드라이버 관리
-├── tests/                 # 통합 테스트
-├── docs/                  # 추가 문서
-└── scripts/               # 빌드/실행 스크립트
-    ├── run.sh             # Linux/macOS 실행 스크립트
-    └── run.bat            # Windows 실행 스크립트
+│   ├── main.rs            # Kernel entry point
+│   ├── lib.rs             # Library root
+│   ├── boot/              # Bootloader interface
+│   ├── memory/            # Memory management
+│   │   ├── mod.rs         # Memory management module integration
+│   │   ├── map.rs         # Memory map parsing and classification
+│   │   ├── frame.rs       # Physical memory frame allocator
+│   │   ├── paging.rs      # Virtual memory and page table management
+│   │   └── heap.rs        # Heap allocator (linked_list_allocator)
+│   ├── scheduler/         # Process/thread scheduler
+│   │   ├── mod.rs         # Scheduler module integration
+│   │   ├── thread.rs       # Thread structure and context management
+│   │   ├── round_robin.rs  # Round-Robin scheduler implementation
+│   │   └── context_switch.rs # Context switching implementation
+│   ├── power/             # Power management
+│   │   ├── mod.rs         # Power management module integration
+│   │   ├── manager.rs     # Power manager
+│   │   ├── acpi.rs        # ACPI parsing
+│   │   ├── scaling.rs     # Dynamic scaling
+│   │   └── policy.rs      # Power policy management
+│   ├── drivers/           # Hardware drivers
+│   │   ├── keyboard.rs    # Keyboard driver
+│   │   ├── vga.rs         # VGA display
+│   │   ├── timer.rs       # Timer
+│   │   ├── serial.rs      # Serial port
+│   │   ├── ata.rs         # ATA/SATA storage driver
+│   │   ├── pci.rs         # PCI bus driver
+│   │   └── rtl8139.rs     # RTL8139 Ethernet driver
+│   ├── interrupts/        # Interrupt handlers
+│   ├── logging.rs         # Logging system
+│   ├── sync/              # Synchronization primitives
+│   ├── syscall/           # System call interface
+│   │   ├── mod.rs         # System call module integration
+│   │   ├── numbers.rs     # System call number definitions
+│   │   ├── handler.rs     # System call handler
+│   │   ├── dispatcher.rs  # System call dispatcher
+│   │   └── implementations.rs # System call implementations
+│   ├── shell/             # Shell interface
+│   │   ├── mod.rs         # Shell main logic
+│   │   └── command.rs     # Command processing
+│   ├── fs/                # Filesystem interface
+│   │   ├── mod.rs         # Filesystem module integration
+│   │   ├── vfs.rs         # Virtual Filesystem (VFS) interface
+│   │   └── fat32.rs       # FAT32 filesystem implementation
+│   └── net/               # Network stack
+│       ├── mod.rs         # Network module integration
+│       ├── ethernet.rs    # Ethernet driver interface
+│       ├── driver.rs      # Network driver management
+│       ├── ip.rs          # IP (IPv4) protocol
+│       ├── arp.rs         # ARP protocol
+│       ├── icmp.rs        # ICMP protocol
+│       ├── udp.rs         # UDP protocol
+│       ├── tcp.rs         # TCP protocol
+│       └── ethernet_frame.rs # Ethernet frame processing
+├── tests/                 # Integration tests
+├── docs/                  # Additional documentation
+└── scripts/               # Build/run scripts
+    ├── run.sh             # Linux/macOS run script
+    └── run.bat            # Windows run script
 ```
 
-## 🗺️ 개발 로드맵
+## 🗺️ Development Roadmap
 
-상세한 개발 로드맵은 [roadmap.md](roadmap.md)를 참고하세요.
+See [roadmap.md](roadmap.md) for detailed development roadmap.
 
-### 현재 상태
+### Current Status
 
-**1단계: 전체 방향 정의 및 아키텍처 설계 (완료)**
-- [x] 프로젝트 구조 설계
-- [x] 아키텍처 문서 작성 (`docs/architecture.md`)
-- [x] 프로젝트 요구사항 문서화 (`docs/requirements.md`)
-- [x] 기본 프로젝트 구조 생성
-- [x] Cargo.toml 및 설정 파일 생성
-- [x] 커널 모듈 구조 생성
+**Phase 1: Overall Direction and Architecture Design (Completed)**
+- [x] Project structure design
+- [x] Architecture documentation (`docs/architecture.md`)
+- [x] Project requirements documentation (`docs/requirements.md`)
+- [x] Basic project structure creation
+- [x] Cargo.toml and configuration file creation
+- [x] Kernel module structure creation
 
-**2단계: Rust OS 개발 환경 구축 (완료)**
-- [x] Rust 툴체인 설치 및 설정 스크립트 작성
-- [x] 크로스 컴파일 환경 설정 완료
-- [x] 디버깅 환경 설정 스크립트 작성
-- [x] 로깅 시스템 기본 구현
-- [x] QEMU 테스트 스크립트 작성 (Windows/Linux)
-- [x] 개발 환경 설정 가이드 작성
+**Phase 2: Rust OS Development Environment Setup (Completed)**
+- [x] Rust toolchain installation and setup script
+- [x] Cross-compilation environment setup
+- [x] Debugging environment setup script
+- [x] Basic logging system implementation
+- [x] QEMU test script creation (Windows/Linux)
+- [x] Development environment setup guide
 
-**3단계: 부트로더 및 커널 초기화 (완료)**
-- [x] 부트로더 통합 (bootloader 크레이트)
-- [x] 부트 정보 파싱 및 저장
-- [x] IDT (Interrupt Descriptor Table) 구현
-- [x] PIC (Programmable Interrupt Controller) 리매핑
-- [x] 예외 핸들러 구현 (모든 x86_64 예외)
-- [x] 인터럽트 활성화
+**Phase 3: Bootloader and Kernel Initialization (Completed)**
+- [x] Bootloader integration (bootloader crate)
+- [x] Boot information parsing and storage
+- [x] IDT (Interrupt Descriptor Table) implementation
+- [x] PIC (Programmable Interrupt Controller) remapping
+- [x] Exception handler implementation (all x86_64 exceptions)
+- [x] Interrupt activation
 
-**4단계: 메모리 관리 시스템 구현 (완료)**
-- [x] 초기 메모리 맵 파싱 및 분류
-- [x] 물리 메모리 프레임 할당자 구현 (4KB 페이지 단위)
-- [x] 가상 메모리 관리 및 페이지 테이블 접근
-- [x] 힙 할당자 초기화 (100KB 힙 영역)
-- [x] 메모리 관리 시스템 통합 초기화
-- [x] bootloader_api 0.11.12 호환성 확보
+**Phase 4: Memory Management System Implementation (Completed)**
+- [x] Initial memory map parsing and classification
+- [x] Physical memory frame allocator implementation (4KB page units)
+- [x] Virtual memory management and page table access
+- [x] Heap allocator initialization (100KB heap area)
+- [x] Memory management system integration initialization
+- [x] bootloader_api 0.11.12 compatibility
 
-**5단계: 기본 드라이버 구현 (완료)**
-- [x] 시리얼 포트 드라이버 (로깅 및 디버깅)
-- [x] 타이머 드라이버 (PIT 기반, 밀리초 단위 시간 추적)
-- [x] 키보드 드라이버 (PS/2 키보드 인터럽트 처리)
-- [x] VGA 텍스트 모드 드라이버 (80x25 텍스트 출력)
-- [x] ATA/SATA 저장장치 드라이버 (블록 디바이스 인터페이스, PIO 모드)
-- [x] 드라이버 초기화 및 통합
+**Phase 5: Basic Driver Implementation (Completed)**
+- [x] Serial port driver (logging and debugging)
+- [x] Timer driver (PIT-based, millisecond time tracking)
+- [x] Keyboard driver (PS/2 keyboard interrupt handling)
+- [x] VGA text mode driver (80x25 text output)
+- [x] ATA/SATA storage driver (block device interface, PIO mode)
+- [x] Driver initialization and integration
 
-**6단계: 스케줄러 구현 (완료)**
-- [x] 스레드 구조 및 컨텍스트 관리 (Thread, ThreadContext)
-- [x] Round-Robin 스케줄러 구현
-- [x] 컨텍스트 스위칭 메커니즘
-- [x] 스레드 상태 관리 (Ready, Running, Blocked, Terminated)
-- [x] 시간 할당량 기반 스케줄링
-- [x] 스케줄러 초기화 및 통합
+**Phase 6: Scheduler Implementation (Completed)**
+- [x] Thread structure and context management (Thread, ThreadContext)
+- [x] Round-Robin scheduler implementation
+- [x] Context switching mechanism
+- [x] Thread state management (Ready, Running, Blocked, Terminated)
+- [x] Time quantum-based scheduling
+- [x] Scheduler initialization and integration
 
-**7단계: 시스템 콜 인터페이스 구현 (완료)**
-- [x] 시스템 콜 핸들러 구현 (인터럽트 0x80)
-- [x] 시스템 콜 디스패처 구현
-- [x] 기본 시스템 콜 구현 (Exit, Write, Read, Yield, Sleep, GetTime, GetPid)
-- [x] 시스템 콜 에러 처리 메커니즘
-- [x] 시스템 콜 핸들러 초기화 및 통합
+**Phase 7: System Call Interface Implementation (Completed)**
+- [x] System call handler implementation (interrupt 0x80)
+- [x] System call dispatcher implementation
+- [x] Basic system call implementation (Exit, Write, Read, Yield, Sleep, GetTime, GetPid)
+- [x] System call error handling mechanism
+- [x] System call handler initialization and integration
 
-**8단계: 기본 Shell 구현 (완료)**
-- [x] Shell 구조체 및 메인 루프 구현
-- [x] 키보드 입력 처리 (Enter, Backspace, Tab 지원)
-- [x] 명령어 파싱 및 실행 시스템
-- [x] 기본 명령어 구현 (help, clear, echo, uptime, exit)
-- [x] VGA 텍스트 모드 출력 통합
-- [x] Shell 초기화 및 커널 통합
+**Phase 8: Basic Shell Implementation (Completed)**
+- [x] Shell structure and main loop implementation
+- [x] Keyboard input processing (Enter, Backspace, Tab support)
+- [x] Command parsing and execution system
+- [x] Basic command implementation (help, clear, echo, uptime, exit)
+- [x] VGA text mode output integration
+- [x] Shell initialization and kernel integration
 
-**9단계: 파일시스템 지원 구현 (완료)**
-- [x] 가상 파일시스템 (VFS) 인터페이스 구현
-- [x] ATA 블록 디바이스 드라이버 인터페이스 구현
-- [x] FAT32 파일시스템 기본 구조 구현
-- [x] FAT32 읽기 기능 완성
-- [x] FAT32 쓰기 기능 구현 (파일 생성, 디렉토리 생성, 파일 쓰기)
-- [x] 파일시스템 마운트 및 통합 (ATA 드라이버 구현 대기 중)
+**Phase 9: Filesystem Support Implementation (Completed)**
+- [x] Virtual Filesystem (VFS) interface implementation
+- [x] ATA block device driver interface implementation
+- [x] FAT32 filesystem basic structure implementation
+- [x] FAT32 read functionality completion
+- [x] FAT32 write functionality implementation (file creation, directory creation, file writing)
+- [x] Filesystem mount and integration (pending ATA driver implementation)
 
-**10단계: 전력 관리 시스템 구현 (완료)**
-- [x] 전력 관리자 구조 및 초기화 시스템 구현
-- [x] ACPI RSDP 주소 추출 및 파싱 기반 구축
-- [x] ACPI 테이블 파싱 모듈 구현 (RSDP, RSDT/XSDT, FADT 등)
-- [x] CPU 클럭 스케일링 모듈 구현 (P-State 제어)
-- [x] CPU 유휴 상태 관리 모듈 구현 (C-State 제어)
-- [x] 전력 정책 관리 시스템 구현
-- [x] 전력 관리 시스템 커널 통합
+**Phase 10: Power Management System Implementation (Completed)**
+- [x] Power manager structure and initialization system implementation
+- [x] ACPI RSDP address extraction and parsing foundation
+- [x] ACPI table parsing module implementation (RSDP, RSDT/XSDT, FADT, etc.)
+- [x] CPU clock scaling module implementation (P-State control)
+- [x] CPU idle state management module implementation (C-State control)
+- [x] Power policy management system implementation
+- [x] Power management system kernel integration
 
-**11단계: PCI 드라이버 및 네트워크 모듈 구현 (완료)**
-- [x] PCI 버스 스캔 및 디바이스 발견 모듈 구현
-- [x] PCI 구성 공간 읽기/쓰기 기능 구현
-- [x] 네트워크 디바이스 검색 기능 구현
-- [x] 이더넷 드라이버 인터페이스 정의 (EthernetDriver trait)
-- [x] 네트워크 드라이버 관리자 구현
-- [x] MAC 주소 및 패킷 버퍼 구조 구현
-- [x] 네트워크 모듈 커널 통합
+**Phase 11: PCI Driver and Network Module Implementation (Completed)**
+- [x] PCI bus scan and device discovery module implementation
+- [x] PCI configuration space read/write functionality implementation
+- [x] Network device discovery functionality implementation
+- [x] Ethernet driver interface definition (EthernetDriver trait)
+- [x] Network driver manager implementation
+- [x] MAC address and packet buffer structure implementation
+- [x] Network module kernel integration
 
-**12단계: 네트워크 드라이버 실제 구현 (완료)**
-- [x] RTL8139 이더넷 드라이버 구현 (레지스터 정의, 초기화, 인터럽트 처리)
-- [x] RTL8139 드라이버를 네트워크 드라이버 매니저에 통합
-- [x] PCI 인터럽트 라인 읽기 기능 추가
-- [x] 네트워크 인터럽트 핸들러 등록 및 활성화
-- [x] 네트워크 모듈 커널 초기화 통합
-- [x] 패킷 송수신 완전 구현 (TX/RX 버퍼 관리, 물리 메모리 할당, 패킷 처리)
+**Phase 12: Actual Network Driver Implementation (Completed)**
+- [x] RTL8139 Ethernet driver implementation (register definition, initialization, interrupt handling)
+- [x] RTL8139 driver integration into network driver manager
+- [x] PCI interrupt line read functionality addition
+- [x] Network interrupt handler registration and activation
+- [x] Network module kernel initialization integration
+- [x] Complete packet transmission/reception implementation (TX/RX buffer management, physical memory allocation, packet processing)
 
-### 계획된 기능
+**Phase 13: Network Protocol Stack Implementation (Completed)**
+- [x] IP (IPv4) protocol implementation (header structure, packet parsing/generation, checksum calculation)
+- [x] ARP (Address Resolution Protocol) implementation (MAC address resolution, ARP table management)
+- [x] ICMP (Internet Control Message Protocol) implementation (Echo Request/Reply, ping support)
+- [x] UDP protocol implementation (header structure, packet transmission/reception, port management)
+- [x] TCP protocol basic structure implementation (header structure, packet processing)
+- [x] Ethernet frame processing module implementation
+- [x] Network stack module integration and kernel integration
 
-**중기 목표**
-- [x] 스케줄러 구현
-- [x] 시스템 콜 인터페이스
-- [x] 기본 Shell 구현
+### Planned Features
 
-**장기 목표**
-- [x] 전력 관리 시스템 (ACPI 파싱 기반 구축) - 기본 구조 완료
-- [x] 동적 전력 스케일링 - 모듈 구현 완료
-- [x] 파일시스템 (FAT32) - 읽기/쓰기 기능 완료 (ATA 드라이버 구현 대기 중)
-- [x] PCI 드라이버 및 네트워크 모듈 기본 구조 - 인터페이스 및 관리자 구현 완료
-- [x] 네트워크 드라이버 실제 구현 (RTL8139) - 기본 구조 완료 (송수신 구현 대기 중)
-- [ ] 네트워크 프로토콜 스택 (IP, TCP/UDP)
-- [ ] GUI 시스템
-- [ ] 멀티코어 지원
+**Mid-term Goals**
+- [x] Scheduler implementation
+- [x] System call interface
+- [x] Basic Shell implementation
 
-## 🛠️ 기술 스택
+**Long-term Goals**
+- [x] Power management system (ACPI parsing foundation) - Basic structure completed
+- [x] Dynamic power scaling - Module implementation completed
+- [x] Filesystem (FAT32) - Read/write functionality completed (pending ATA driver implementation)
+- [x] PCI driver and network module basic structure - Interface and manager implementation completed
+- [x] Actual network driver implementation (RTL8139) - Basic structure completed (pending transmission/reception implementation)
+- [x] Network protocol stack (IP, TCP/UDP) - Basic structure completed (pending full TCP implementation)
+- [ ] GUI system
+- [ ] Multi-core support
 
-### 핵심 기술
-- **언어**: Rust (nightly)
-- **아키텍처**: x86_64
-- **부트 프로토콜**: UEFI (BIOS 레거시 지원 예정)
-- **환경**: `no_std` (표준 라이브러리 없음)
+## 🛠️ Technology Stack
 
-### 주요 크레이트
-- `bootloader_api` (0.11.12) - 부트로더 통합 및 부트 정보 제공
-- `x86_64` (0.14) - x86_64 아키텍처 지원 및 페이지 테이블 관리
-- `volatile` (0.4) - 하드웨어 레지스터 접근
-- `spin` (0.9) - 스핀락 구현
-- `uart_16550` (0.2) - 시리얼 포트 통신
-- `linked_list_allocator` (0.10) - 힙 할당자 구현
+### Core Technologies
+- **Language**: Rust (nightly)
+- **Architecture**: x86_64
+- **Boot Protocol**: UEFI (BIOS legacy support planned)
+- **Environment**: `no_std` (no standard library)
 
-### 향후 추가 예정
-- `acpi` - ACPI 테이블 파싱 (현재 직접 구현 중)
-- `embedded-graphics` - GUI 프레임워크
-- `smoltcp` - 네트워크 스택 (현재 기본 구조 구현 완료)
+### Key Crates
+- `bootloader_api` (0.11.12) - Bootloader integration and boot information
+- `x86_64` (0.14) - x86_64 architecture support and page table management
+- `volatile` (0.4) - Hardware register access
+- `spin` (0.9) - Spinlock implementation
+- `uart_16550` (0.2) - Serial port communication
+- `linked_list_allocator` (0.10) - Heap allocator implementation
 
-## 🤝 기여하기
+### Future Additions
+- `acpi` - ACPI table parsing (currently implementing directly)
+- `embedded-graphics` - GUI framework
+- `smoltcp` - Network stack (basic structure implementation completed)
 
-기여를 환영합니다! 프로젝트에 기여하고 싶으시다면:
+## 🤝 Contributing
 
-1. 이 저장소를 포크하세요
-2. 기능 브랜치를 생성하세요 (`git checkout -b feature/amazing-feature`)
-3. 변경사항을 커밋하세요 (`git commit -m 'Add some amazing feature'`)
-4. 브랜치에 푸시하세요 (`git push origin feature/amazing-feature`)
-5. Pull Request를 열어주세요
+Contributions are welcome! If you'd like to contribute to this project:
 
-### 코드 스타일
-- `rustfmt`를 사용하여 코드 포맷팅
-- `clippy` 경고 해결
-- 의미 있는 커밋 메시지 작성
+1. Fork this repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
-### 이슈 리포트
-버그를 발견하셨거나 기능 제안이 있으시면 [Issues](https://github.com/yourusername/simple_os_for_my_laptop/issues)에 등록해주세요.
+### Code Style
+- Use `rustfmt` for code formatting
+- Resolve `clippy` warnings
+- Write meaningful commit messages
 
-## 📝 라이선스
+### Issue Reports
+If you find bugs or have feature suggestions, please register them in [Issues](https://github.com/yourusername/simple_os_for_my_laptop/issues).
 
-이 프로젝트의 라이선스는 아직 결정되지 않았습니다. 프로젝트 정책 결정 후 LICENSE 파일이 추가될 예정입니다.
+## 📝 License
 
-## 📚 참고 자료
+The license for this project has not yet been determined. A LICENSE file will be added after project policy decisions are made.
 
-### 학습 자료
-- [Writing an OS in Rust](https://os.phil-opp.com/) - Rust OS 개발 튜토리얼
-- [The Embedded Rust Book](https://docs.rust-embedded.org/book/) - no_std Rust 프로그래밍
-- [Operating Systems: Three Easy Pieces](http://pages.cs.wisc.edu/~remzi/OSTEP/) - 운영체제 이론
+## 📚 References
 
-### 참고 OS 프로젝트
-- [Redox OS](https://github.com/redox-os/redox) - Rust로 작성된 Unix-like OS
-- [Theseus OS](https://github.com/theseus-os/Theseus) - 모듈형 런타임 시스템
-- [Tock OS](https://github.com/tock/tock) - 임베디드 시스템용 초저전력 OS
-- [IntermezzOS](https://intermezzos.github.io/) - 학습용 미니멀 OS
+### Learning Resources
+- [Writing an OS in Rust](https://os.phil-opp.com/) - Rust OS development tutorial
+- [The Embedded Rust Book](https://docs.rust-embedded.org/book/) - no_std Rust programming
+- [Operating Systems: Three Easy Pieces](http://pages.cs.wisc.edu/~remzi/OSTEP/) - Operating system theory
 
-### 하드웨어 참조
+### Reference OS Projects
+- [Redox OS](https://github.com/redox-os/redox) - Unix-like OS written in Rust
+- [Theseus OS](https://github.com/theseus-os/Theseus) - Modular runtime system
+- [Tock OS](https://github.com/tock/tock) - Ultra-low power OS for embedded systems
+- [IntermezzOS](https://intermezzos.github.io/) - Minimal OS for learning
+
+### Hardware References
 - [Intel 64 and IA-32 Architectures Software Developer's Manual](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)
 - [ACPI Specification](https://uefi.org/specifications)
 - [UEFI Specification](https://uefi.org/specifications)
 
-## ⚠️ 주의사항
+## ⚠️ Warnings
 
-이 프로젝트는 **실험적**이며 개발 중입니다.
+This project is **experimental** and under development.
 
-- 프로덕션 환경에서 사용하지 마세요
-- 데이터 손실 위험이 있으므로 중요한 데이터가 있는 시스템에서는 테스트하지 마세요
-- 실제 하드웨어에서 테스트할 때는 전용 테스트 머신을 사용하세요
-- 커널 레벨 버그는 시스템을 완전히 멈출 수 있습니다
+- Do not use in production environments
+- Do not test on systems with important data due to risk of data loss
+- Use dedicated test machines when testing on actual hardware
+- Kernel-level bugs can completely freeze the system
 
-## 📧 연락처
+## 📧 Contact
 
-프로젝트 관련 문의사항이 있으시면 [Issues](https://github.com/yourusername/simple_os_for_my_laptop/issues)를 통해 연락해주세요.
+For project-related inquiries, please contact us through [Issues](https://github.com/yourusername/simple_os_for_my_laptop/issues).
 
 ---
 

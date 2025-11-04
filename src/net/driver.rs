@@ -151,6 +151,14 @@ pub extern "x86-interrupt" fn network_interrupt_handler(
     
     if let Some(ref mut driver) = manager.driver {
         driver.handle_interrupt();
+        
+        // 수신된 패킷 처리
+        while let Some(packet) = driver.receive_packet() {
+            // 이더넷 프레임 처리로 전달
+            if let Err(e) = crate::net::ethernet_frame::handle_ethernet_frame(&packet) {
+                crate::log_warn!("Failed to handle Ethernet frame: {:?}", e);
+            }
+        }
     }
     
     // PIC에 인터럽트 종료 신호 전송
