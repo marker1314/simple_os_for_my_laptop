@@ -12,9 +12,14 @@ pub mod manager;
 pub mod acpi;
 pub mod scaling;
 pub mod policy;
+pub mod idle;
+pub mod device;
+pub mod stats;
+pub mod rapl;
 
 pub use manager::PowerManager;
 pub use policy::{PowerPolicy, PowerMode};
+pub use idle::{IdleStateManager, CState};
 
 use spin::Mutex;
 

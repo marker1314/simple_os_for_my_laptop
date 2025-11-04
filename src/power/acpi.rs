@@ -125,6 +125,43 @@ impl AcpiParser {
             hid: *b"PNP0C50\0",                      // I2C HID 장치 표준 HID
         })
     }
+
+    /// 전원 소스 종류
+    pub enum PowerSource {
+        Ac,
+        Battery,
+        Unknown,
+    }
+
+    /// 배터리 상태 요약
+    pub struct BatteryStatus {
+        pub present: bool,
+        pub charging: bool,
+        pub capacity_percent: u8,
+    }
+
+    /// _PSR (Power Source) 읽기 - Stub
+    pub fn read_power_source(&self) -> PowerSource {
+        if !self.initialized { return PowerSource::Unknown; }
+        // TODO: ACPI _PSR 평가 구현
+        PowerSource::Unknown
+    }
+
+    /// _BST (Battery Status) 읽기 - Stub
+    pub fn read_battery_status(&self) -> BatteryStatus {
+        if !self.initialized {
+            return BatteryStatus { present: false, charging: false, capacity_percent: 0 };
+        }
+        // TODO: ACPI _BST 평가 구현
+        BatteryStatus { present: false, charging: false, capacity_percent: 0 }
+    }
+
+    /// 대략적 전력 소비 추정 - Stub
+    pub fn estimate_power_consumption(&self) -> u32 {
+        if !self.initialized { return 0; }
+        // TODO: CPU P-State + 장치 상태 기반 추정
+        0
+    }
 }
 
 /// ACPI에서 I2C 장치 찾기 (전역 함수)

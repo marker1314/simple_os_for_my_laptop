@@ -6,11 +6,13 @@ pub mod map;
 pub mod frame;
 pub mod paging;
 pub mod heap;
+pub mod slab;
 
 pub use map::{init as init_memory_map, get as get_memory_map, MemoryMap, MemoryType, ParsedMemoryRegion};
 pub use frame::{init as init_frame_allocator, allocate_frame};
 pub use paging::{init_mapper, get_physical_memory_offset, print_page_table_info};
-pub use heap::{init_heap, HEAP_START, HEAP_SIZE};
+pub use heap::{init_heap, HEAP_START};
+pub use slab::SLAB;
 
 use bootloader_api::BootInfo;
 use x86_64::structures::paging::mapper::MapToError;
@@ -42,9 +44,7 @@ pub unsafe fn init(boot_info: &'static BootInfo) -> Result<(), MapToError<Size4K
     
     // 3. 힙 할당자 초기화
     heap::init_heap(boot_info)?;
-    crate::log_info!("Heap allocator initialized ({} KB at {:p})", 
-                     HEAP_SIZE / 1024, 
-                     HEAP_START as *const u8);
+    crate::log_info!("Heap allocator initialized at {:p}", HEAP_START as *const u8);
     
     // 4. 페이지 테이블 정보 출력 (디버깅)
     paging::print_page_table_info();

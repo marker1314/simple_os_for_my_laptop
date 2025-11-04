@@ -1,10 +1,10 @@
-# Simple OS for My Laptop
+# Rust-Based Laptop Operating System
 
 [![Rust](https://img.shields.io/badge/rust-nightly-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-x86__64-lightgrey.svg)](https://en.wikipedia.org/wiki/X86-64)
 
-A low-power laptop operating system kernel written in Rust. This is a completely independent implementation from the Linux kernel, optimized for laptop environments with a focus on power management.
+A feature-rich laptop operating system kernel written in Rust with comprehensive driver support and a GUI desktop. This is a completely independent implementation from the Linux kernel. The project prioritizes modular architecture, broad hardware support, and practical power management.
 
 ## 📋 Table of Contents
 
@@ -22,7 +22,7 @@ A low-power laptop operating system kernel written in Rust. This is a completely
 ## ✨ Features
 
 - **Memory Safety**: Minimizes kernel-level bugs through Rust's type system and memory safety guarantees
-- **Ultra-Low Power Design**: ACPI-based power management and dynamic CPU clock scaling
+- **Power-Aware Design**: ACPI-based power management framework and dynamic CPU clock scaling interface (P-State/C-State control in progress)
 - **Independent Implementation**: Completely independent kernel design from Linux
 - **Modular Architecture**: Extensible and maintainable structure
 - **no_std Environment**: Lightweight kernel running without the standard library
@@ -45,10 +45,16 @@ A low-power laptop operating system kernel written in Rust. This is a completely
 - Filesystem support (FAT32)
 
 ### Non-Functional Goals
-- **Boot Time**: Under 5 seconds
-- **Idle Power Consumption**: Under 5W
+- **Boot Time**: Target under 5 seconds (hardware dependent)
+- **Idle Power Consumption**: Target under 5W on supported hardware (measurement and tuning ongoing)
 - **Memory Usage**: Minimum 64MB RAM (Recommended: 512MB or more)
 - **Stability**: Long-term operation without kernel panics
+
+## 📏 Project Scale and Scope
+
+- Code size: 13,000+ lines across ~75 Rust source files
+- Subsystems: memory management, scheduler, filesystem (FAT32), network stack (TCP/IP), GUI with applications, SMP, drivers (ATA, PCI, RTL8139, PS/2, I2C-HID), ACPI-based power framework
+- Architecture: modular, componentized design intended for experimentation and learning
 
 ## 🚀 Getting Started
 
@@ -240,6 +246,16 @@ simple_os_for_my_laptop/
     ├── run.sh             # Linux/macOS run script
     └── run.bat            # Windows run script
 ```
+
+## 🔋 Power Management Status
+
+Current status:
+- ACPI parsing framework and power policy interface: implemented
+- CPU dynamic scaling (P-State/C-State): interfaces present, MSR/MWAIT wiring in progress
+- Device power management (disk/network/display): planned
+- Power monitoring/estimation: planned
+
+See the roadmap for details.
 
 ## 🗺️ Development Roadmap
 

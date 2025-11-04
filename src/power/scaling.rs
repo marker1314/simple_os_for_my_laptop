@@ -5,6 +5,37 @@
 use crate::power::PowerError;
 use x86_64::registers::model_specific::{Efer, EferFlags};
 
+// MSR registers for performance control/status
+const IA32_PERF_STATUS: u32 = 0x198;
+const IA32_PERF_CTL: u32 = 0x199;
+
+#[inline]
+unsafe fn read_msr(msr: u32) -> u64 {
+    let low: u32;
+    let high: u32;
+    core::arch::asm!(
+        "rdmsr",
+        in("ecx") msr,
+        out("eax") low,
+        out("edx") high,
+        options(nostack, preserves_flags)
+    );
+    ((high as u64) << 32) | (low as u64)
+}
+
+#[inline]
+unsafe fn write_msr(msr: u32, value: u64) {
+    let low: u32 = value as u32;
+    let high: u32 = (value >> 32) as u32;
+    core::arch::asm!(
+        "wrmsr",
+        in("ecx") msr,
+        in("eax") low,
+        in("edx") high,
+        options(nostack, preserves_flags)
+    );
+}
+
 /// CPU 스케일링 관리자
 ///
 /// CPU 클럭 속도를 제어합니다.
@@ -49,11 +80,18 @@ impl CpuScaling {
         if !self.initialized {
             return Err(PowerError::NotInitialized);
         }
-        
-        // TODO: MSR을 통한 P-State 설정
-        // 현재는 기본 상태 유지
-        self.current_p_state = 0;
-        
+        // Best effort: drive target ratio to current status' max observed ratio
+        unsafe {
+            let status = read_msr(IA32_PERF_STATUS);
+            let current_ratio: u16 = (status & 0xFF00) as u16 >> 8; // typical encoding
+            let target_ratio = if current_ratio == 0 { 0x20 } else { current_ratio };
+            let mut ctl = read_msr(IA32_PERF_CTL);
+            // clear target ratio bits [15:8] then set
+            ctl &= !0xFF00u64;
+            ctl |= ((target_ratio as u64) & 0xFF) << 8;
+            write_msr(IA32_PERF_CTL, ctl);
+        }
+        self.current_p_state = 0; // denote performance
         Ok(())
     }
     
@@ -64,11 +102,17 @@ impl CpuScaling {
         if !self.initialized {
             return Err(PowerError::NotInitialized);
         }
-        
-        // TODO: MSR을 통한 P-State 설정
-        // 현재는 기본 상태 유지
+        unsafe {
+            let status = read_msr(IA32_PERF_STATUS);
+            let cur: u16 = (status & 0xFF00) as u16 >> 8;
+            let max = if cur == 0 { 0x20 } else { cur };
+            let balanced = core::cmp::max(0x08, max / 2);
+            let mut ctl = read_msr(IA32_PERF_CTL);
+            ctl &= !0xFF00u64;
+            ctl |= ((balanced as u64) & 0xFF) << 8;
+            write_msr(IA32_PERF_CTL, ctl);
+        }
         self.current_p_state = 1;
-        
         Ok(())
     }
     
@@ -79,11 +123,15 @@ impl CpuScaling {
         if !self.initialized {
             return Err(PowerError::NotInitialized);
         }
-        
-        // TODO: MSR을 통한 P-State 설정
-        // 현재는 기본 상태 유지
+        unsafe {
+            // Choose a conservative low ratio
+            let low_ratio: u16 = 0x08; // safe floor on many systems
+            let mut ctl = read_msr(IA32_PERF_CTL);
+            ctl &= !0xFF00u64;
+            ctl |= ((low_ratio as u64) & 0xFF) << 8;
+            write_msr(IA32_PERF_CTL, ctl);
+        }
         self.current_p_state = 2;
-        
         Ok(())
     }
     

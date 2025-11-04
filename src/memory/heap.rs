@@ -14,9 +14,11 @@ use bootloader_api::BootInfo;
 use crate::memory::paging::{get_physical_memory_offset, init_mapper};
 use crate::memory::frame::BootInfoFrameAllocator;
 
-/// 힙 크기 (100KB)
+/// 힙 베이스 주소 및 초기/최대 크기
 pub const HEAP_START: usize = 0x_4444_4444_0000;
-pub const HEAP_SIZE: usize = 100 * 1024; // 100 KB
+const HEAP_INITIAL_SIZE: usize = 100 * 1024; // 100 KB
+const HEAP_MAX_SIZE: usize = 2 * 1024 * 1024; // 2 MB cap
+static mut HEAP_SIZE_BYTES: usize = HEAP_INITIAL_SIZE;
 
 /// 전역 힙 할당자
 #[global_allocator]
@@ -37,9 +39,14 @@ pub unsafe fn init_heap(
     let mut mapper = init_mapper(phys_mem_offset);
     let mut frame_allocator = BootInfoFrameAllocator::new();
 
+    // 시스템 메모리 상황에 따라 힙 크기를 동적으로 설정 (최대 2MB)
+    let total_regions = boot_info.memory_regions.len();
+    let dynamic_target = if total_regions > 0 { 512 * 1024 } else { HEAP_INITIAL_SIZE };
+    HEAP_SIZE_BYTES = core::cmp::min(HEAP_MAX_SIZE, core::cmp::max(HEAP_INITIAL_SIZE, dynamic_target));
+
     // 힙 영역을 페이지로 변환
     let heap_start = VirtAddr::new(HEAP_START as u64);
-    let heap_end = heap_start + HEAP_SIZE as u64 - 1u64;
+    let heap_end = heap_start + HEAP_SIZE_BYTES as u64 - 1u64;
     let heap_start_page = Page::containing_address(heap_start);
     let heap_end_page = Page::containing_address(heap_end);
 
@@ -56,7 +63,7 @@ pub unsafe fn init_heap(
 
     // 할당자 초기화
     unsafe {
-        ALLOCATOR.lock().init(HEAP_START as *mut u8, HEAP_SIZE);
+        ALLOCATOR.lock().init(HEAP_START as *mut u8, HEAP_SIZE_BYTES);
     }
 
     Ok(())

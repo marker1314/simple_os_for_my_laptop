@@ -302,7 +302,7 @@ impl Rtl8139Driver {
         rcr |= RCR_AM;   // Accept Multicast
         rcr |= RCR_AB;   // Accept Broadcast
         rcr |= RCR_WRAP; // Wrap mode
-        rcr |= (64 << RCR_MXDMA_SHIFT); // Max DMA Burst Size: 64 bytes
+        rcr |= (256 << RCR_MXDMA_SHIFT); // Max DMA Burst Size: 256 bytes (reduce interrupts)
         
         self.write_u32(RTL8139_RCR, rcr);
     }
@@ -312,7 +312,7 @@ impl Rtl8139Driver {
         // Transmit Configuration Register 설정
         let mut tcr = 0u32;
         tcr |= (3 << TCR_IFG_SHIFT); // Inter-Frame Gap: 3
-        tcr |= (64 << TCR_MXDMA_SHIFT); // Max DMA Burst Size: 64 bytes
+        tcr |= (256 << TCR_MXDMA_SHIFT); // Max DMA Burst Size: 256 bytes
         
         self.write_u32(RTL8139_TCR, tcr);
     }
@@ -548,31 +548,33 @@ impl EthernetDriver for Rtl8139Driver {
         }
         
         unsafe {
-            // 인터럽트 상태 읽기
-            let isr = self.read_u16(RTL8139_ISR);
-            
+            // 인터럽트 상태 읽기 및 배치 처리
+            let mut isr = self.read_u16(RTL8139_ISR);
+
             if (isr & ISR_ROK) != 0 {
-                // 수신 완료
-                crate::log_debug!("RTL8139: Receive OK interrupt");
-                // 수신 패킷 처리는 receive_packet()에서 수행
+                // Drain as many packets as available
+                let mut drained = 0;
+                while let Some(_pkt) = self.receive_packet() {
+                    drained += 1;
+                    if drained > 32 { break; } // avoid livelock
+                }
+                crate::log_debug!("RTL8139: Receive OK, drained {} packets", drained);
             }
-            
+
             if (isr & ISR_TOK) != 0 {
                 // 송신 완료
-                crate::log_debug!("RTL8139: Transmit OK interrupt");
+                // crate::log_debug!("RTL8139: Transmit OK");
             }
-            
+
             if (isr & ISR_RER) != 0 {
-                // 수신 에러
                 crate::log_warn!("RTL8139: Receive Error interrupt");
             }
-            
+
             if (isr & ISR_TER) != 0 {
-                // 송신 에러
                 crate::log_warn!("RTL8139: Transmit Error interrupt");
             }
-            
-            // 인터럽트 상태 클리어
+
+            // 인터럽트 상태 클리어 (일괄)
             self.write_u16(RTL8139_ISR, isr);
         }
     }

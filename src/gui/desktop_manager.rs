@@ -26,6 +26,7 @@ pub struct DesktopManager {
     running_apps: Vec<RunningApp>,
     show_desktop: bool,
     next_app_offset: usize,
+    dirty: bool,
 }
 
 impl DesktopManager {
@@ -35,6 +36,7 @@ impl DesktopManager {
             running_apps: Vec::new(),
             show_desktop: true,
             next_app_offset: 0,
+            dirty: true,
         }
     }
 
@@ -67,6 +69,7 @@ impl DesktopManager {
         };
 
         self.running_apps.push(app);
+        self.dirty = true;
     }
 
     /// 마우스 이벤트 처리
@@ -94,10 +97,12 @@ impl DesktopManager {
                 }
             }
         }
+        self.dirty = true;
     }
 
     /// 전체 화면 렌더링
-    pub fn render(&self) {
+    pub fn render(&mut self) {
+        if !self.dirty { return; }
         // 1. 배경과 데스크톱 요소 (태스크바, 런처)
         desktop::render();
 
@@ -113,6 +118,7 @@ impl DesktopManager {
                 }
             }
         }
+        self.dirty = false;
     }
 
     /// 데스크톱 표시 여부 설정

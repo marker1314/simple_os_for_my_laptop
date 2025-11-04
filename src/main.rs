@@ -234,7 +234,8 @@ fn desktop_loop() -> ! {
     use simple_os::drivers::timer;
     
     let mut last_render_time = 0u64;
-    let render_interval = 16; // ~60 FPS (16ms)
+    let mut render_interval = 16u64; // adaptive: 16ms active, 33-100ms idle
+    let mut last_input_time = 0u64;
     
     loop {
         let current_time = timer::get_milliseconds();
@@ -243,18 +244,23 @@ fn desktop_loop() -> ! {
         if touchpad::is_initialized() {
             if let Some(event) = touchpad::poll_event() {
                 simple_os::gui::desktop_manager::handle_mouse_event(event);
+                last_input_time = current_time;
             }
         }
         
         // PS/2 마우스 이벤트 처리 (백업 또는 외장 마우스)
         if let Some(event) = mouse::get_event() {
             simple_os::gui::desktop_manager::handle_mouse_event(event);
+            last_input_time = current_time;
         }
         
         // 주기적으로 화면 렌더링
         if current_time - last_render_time >= render_interval {
             simple_os::gui::desktop_manager::render();
             last_render_time = current_time;
+            // 입력 유휴 시간에 따라 렌더 주기 조정
+            let idle_ms = current_time.saturating_sub(last_input_time);
+            render_interval = if idle_ms < 200 { 16 } else if idle_ms < 1000 { 33 } else { 100 };
         }
         
         // CPU 절전
