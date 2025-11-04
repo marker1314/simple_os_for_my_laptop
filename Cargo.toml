@@ -1,0 +1,45 @@
+[package]
+name = "simple_os"
+version = "0.1.0"
+edition = "2021"
+authors = ["Simple OS Developers"]
+license = "MIT OR Apache-2.0"
+description = "A low-power operating system kernel written in Rust for laptops"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+# 부트로더 통합
+bootloader = { version = "0.11", features = ["map_physical_memory"] }
+
+# x86_64 아키텍처 지원
+x86_64 = "0.14"
+
+# 하드웨어 레지스터 접근
+volatile = "0.4"
+
+# 스핀락 구현
+spin = "0.9"
+
+# 시리얼 포트 통신
+uart_16550 = "0.2"
+
+# 힙 할당자 (초기 단계)
+linked_list_allocator = "0.10"
+
+[profile.dev]
+panic = "abort"
+opt-level = 0
+debug = true
+
+[profile.release]
+panic = "abort"
+opt-level = 3
+lto = true
+codegen-units = 1
+debug = false
+
+[profile.test]
+panic = "abort"
+
