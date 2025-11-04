@@ -31,6 +31,7 @@ A low-power laptop operating system kernel written in Rust. This is a completely
 - **Network Stack**: Complete TCP/IP stack with RTL8139 Ethernet driver support
 - **GUI System**: VESA framebuffer-based graphical user interface with window management
 - **Input Devices**: PS/2 keyboard and mouse support with event handling
+- **GUI Applications**: Calculator, text editor, file manager, system monitor, and terminal emulator
 
 ## 🎯 Goals
 
@@ -220,7 +221,14 @@ simple_os_for_my_laptop/
 │       ├── mod.rs         # GUI module integration
 │       ├── window.rs      # Window management
 │       ├── widget.rs      # GUI widgets (Button, TextBox)
-│       └── compositor.rs  # Display compositor
+│       ├── compositor.rs  # Display compositor
+│       └── applications/  # GUI applications
+│           ├── mod.rs     # Applications module
+│           ├── calculator.rs      # Calculator app
+│           ├── text_editor.rs     # Text editor app
+│           ├── file_manager.rs    # File manager app
+│           ├── system_monitor.rs  # System monitor app
+│           └── terminal.rs        # Terminal emulator app
 ├── tests/                 # Integration tests
 ├── docs/                  # Additional documentation
 └── scripts/               # Build/run scripts
@@ -352,6 +360,13 @@ See [roadmap.md](roadmap.md) for detailed development roadmap.
 - [x] Display compositor implementation
 - [x] GUI system kernel integration
 
+**Phase 15: Advanced GUI Applications Implementation (Completed)**
+- [x] Calculator application (functional calculator with basic operations)
+- [x] Text editor application (multi-line editing with file support)
+- [x] File manager application (directory navigation, file browsing)
+- [x] System monitor application (CPU/memory usage, process list)
+- [x] Terminal emulator (GUI-based terminal with command execution)
+
 ### Planned Features
 
 **Mid-term Goals**
@@ -370,9 +385,10 @@ See [roadmap.md](roadmap.md) for detailed development roadmap.
 - [x] Interactive shell with disk management - Completed
 - [x] GUI system (framebuffer, window manager, widgets) - Completed
 - [x] Mouse driver (PS/2 mouse support) - Completed
-- [ ] Advanced GUI applications
+- [x] Advanced GUI applications (Calculator, Text Editor, File Manager, System Monitor, Terminal) - Completed
 - [ ] Multi-core support
 - [ ] Enhanced filesystem features
+- [ ] Application launcher and desktop environment
 
 ## 🛠️ Technology Stack
 

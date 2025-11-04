@@ -5,10 +5,12 @@
 pub mod window;
 pub mod widget;
 pub mod compositor;
+pub mod applications;
 
 pub use window::Window;
 pub use widget::{Widget, Button, TextBox};
 pub use compositor::Compositor;
+pub use applications::*;
 
 use crate::drivers::framebuffer::Color;
 
