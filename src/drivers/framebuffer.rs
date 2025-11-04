@@ -331,3 +331,13 @@ where
     FRAMEBUFFER.lock().as_mut().map(f)
 }
 
+/// 화면 너비 가져오기
+pub fn get_width() -> usize {
+    FRAMEBUFFER.lock().as_ref().map_or(800, |fb| fb.info.width)
+}
+
+/// 화면 높이 가져오기
+pub fn get_height() -> usize {
+    FRAMEBUFFER.lock().as_ref().map_or(600, |fb| fb.info.height)
+}
+

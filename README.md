@@ -384,6 +384,15 @@ See [roadmap.md](roadmap.md) for detailed development roadmap.
 - [x] Enhanced FAT32 operations (split_path, is_directory_empty, free_cluster_chain)
 - [x] Cache statistics and performance monitoring
 
+**Phase 18: Application Launcher and Desktop Environment (Completed)**
+- [x] Desktop environment structure (desktop manager, taskbar)
+- [x] Application launcher with icon grid layout
+- [x] Taskbar with start button and system tray
+- [x] Desktop manager integration with GUI applications
+- [x] Mouse-driven application launching
+- [x] 60 FPS rendering loop in desktop mode
+- [x] Automatic window offset for multiple apps
+
 ### Planned Features
 
 **Mid-term Goals**
@@ -405,7 +414,7 @@ See [roadmap.md](roadmap.md) for detailed development roadmap.
 - [x] Advanced GUI applications (Calculator, Text Editor, File Manager, System Monitor, Terminal) - Completed
 - [x] Multi-core support (SMP with APIC and load balancing) - Completed
 - [x] Enhanced filesystem features (Path processing, block cache, delete/rename) - Completed
-- [ ] Application launcher and desktop environment
+- [x] Application launcher and desktop environment - Completed
 
 ## 🛠️ Technology Stack
 

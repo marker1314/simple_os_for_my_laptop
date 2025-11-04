@@ -185,9 +185,42 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
     
     simple_os::log_info!("Kernel initialization complete");
     
-    // 18. Shell 시작
-    simple_os::log_info!("Starting shell...");
-    let mut shell = simple_os::shell::Shell::new();
-    shell.run();
+    // 18. GUI 데스크톱 환경 시작 (프레임버퍼가 사용 가능한 경우)
+    if simple_os::drivers::framebuffer::is_initialized() {
+        simple_os::log_info!("Starting desktop environment...");
+        desktop_loop();
+    } else {
+        // 프레임버퍼가 없으면 Shell 시작
+        simple_os::log_info!("Starting shell...");
+        let mut shell = simple_os::shell::Shell::new();
+        shell.run();
+    }
+}
+
+/// 데스크톱 환경 메인 루프
+fn desktop_loop() -> ! {
+    use simple_os::drivers::mouse;
+    use simple_os::drivers::timer;
+    
+    let mut last_render_time = 0u64;
+    let render_interval = 16; // ~60 FPS (16ms)
+    
+    loop {
+        let current_time = timer::get_milliseconds();
+        
+        // 마우스 이벤트 처리
+        if let Some(event) = mouse::get_event() {
+            simple_os::gui::desktop_manager::handle_mouse_event(event);
+        }
+        
+        // 주기적으로 화면 렌더링
+        if current_time - last_render_time >= render_interval {
+            simple_os::gui::desktop_manager::render();
+            last_render_time = current_time;
+        }
+        
+        // CPU 절전
+        x86_64::instructions::hlt();
+    }
 }
 
