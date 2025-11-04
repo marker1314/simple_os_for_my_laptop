@@ -45,6 +45,7 @@ pub mod shell;
 pub mod fs;
 pub mod net;
 pub mod gui;
+pub mod smp;
 
 pub mod logging;
 

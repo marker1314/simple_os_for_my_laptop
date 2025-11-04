@@ -632,6 +632,143 @@ impl Fat32FileSystem {
         result
     }
     
+    /// 경로를 부모 경로와 파일명으로 분리
+    ///
+    /// # Arguments
+    /// * `path` - 분리할 경로
+    ///
+    /// # Returns
+    /// (부모 경로, 파일명)
+    fn split_path<'a>(&self, path: &'a str) -> FsResult<(&'a str, &'a str)> {
+        let path = path.trim_start_matches('/').trim_end_matches('/');
+        if path.is_empty() {
+            return Err(FsError::InvalidPath);
+        }
+        
+        if let Some(pos) = path.rfind('/') {
+            Ok((&path[..pos], &path[pos + 1..]))
+        } else {
+            Ok(("", path))
+        }
+    }
+    
+    /// 디렉토리가 비어있는지 확인
+    ///
+    /// # Arguments
+    /// * `dir_cluster` - 디렉토리 클러스터
+    ///
+    /// # Returns
+    /// 비어있으면 true
+    fn is_directory_empty(&mut self, dir_cluster: u32) -> FsResult<bool> {
+        let cluster_size = self.boot_sector.sectors_per_cluster as usize * 512;
+        let mut dir_buf = alloc::vec![0u8; cluster_size];
+        
+        self.read_single_cluster(dir_cluster, &mut dir_buf)?;
+        
+        let num_entries = cluster_size / size_of::<Fat32DirEntry>();
+        for i in 2..num_entries { // 0과 1은 "." 와 ".." 엔트리
+            let entry = unsafe {
+                core::ptr::read(dir_buf.as_ptr().add(i * size_of::<Fat32DirEntry>()) as *const Fat32DirEntry)
+            };
+            
+            if !entry.is_deleted() && entry.name[0] != 0 {
+                return Ok(false); // 비어있지 않음
+            }
+        }
+        
+        Ok(true) // 비어있음
+    }
+    
+    /// FAT 클러스터 체인 해제
+    ///
+    /// # Arguments
+    /// * `start_cluster` - 시작 클러스터
+    fn free_cluster_chain(&mut self, start_cluster: u32) -> FsResult<()> {
+        let mut current_cluster = start_cluster;
+        
+        loop {
+            let next_cluster = self.read_fat_entry(current_cluster)?;
+            self.write_fat_entry(current_cluster, 0)?; // 클러스터 해제
+            
+            if next_cluster >= 0x0FFFFFF8 {
+                break; // EOF
+            }
+            
+            current_cluster = next_cluster;
+        }
+        
+        Ok(())
+    }
+    
+    /// 디렉토리 엔트리 삭제
+    ///
+    /// # Arguments
+    /// * `dir_cluster` - 디렉토리 클러스터
+    /// * `filename` - 삭제할 파일명
+    fn delete_directory_entry(&mut self, dir_cluster: u32, filename: &str) -> FsResult<()> {
+        let cluster_size = self.boot_sector.sectors_per_cluster as usize * 512;
+        let mut dir_buf = alloc::vec![0u8; cluster_size];
+        
+        self.read_single_cluster(dir_cluster, &mut dir_buf)?;
+        
+        let name_8_3 = Self::name_to_8_3(filename);
+        let num_entries = cluster_size / size_of::<Fat32DirEntry>();
+        
+        for i in 0..num_entries {
+            let offset = i * size_of::<Fat32DirEntry>();
+            let entry = unsafe {
+                core::ptr::read(dir_buf.as_ptr().add(offset) as *const Fat32DirEntry)
+            };
+            
+            if entry.name == name_8_3 {
+                // 엔트리 삭제 마킹 (첫 바이트를 0xE5로)
+                dir_buf[offset] = 0xE5;
+                self.write_cluster(dir_cluster, &dir_buf)?;
+                return Ok(());
+            }
+        }
+        
+        Err(FsError::NotFound)
+    }
+    
+    /// 디렉토리 엔트리 업데이트
+    ///
+    /// # Arguments
+    /// * `dir_cluster` - 디렉토리 클러스터
+    /// * `filename` - 파일명
+    /// * `new_entry` - 새 엔트리
+    fn update_directory_entry(&mut self, dir_cluster: u32, filename: &str, new_entry: Fat32DirEntry) -> FsResult<()> {
+        let cluster_size = self.boot_sector.sectors_per_cluster as usize * 512;
+        let mut dir_buf = alloc::vec![0u8; cluster_size];
+        
+        self.read_single_cluster(dir_cluster, &mut dir_buf)?;
+        
+        let name_8_3 = Self::name_to_8_3(filename);
+        let num_entries = cluster_size / size_of::<Fat32DirEntry>();
+        
+        for i in 0..num_entries {
+            let offset = i * size_of::<Fat32DirEntry>();
+            let entry = unsafe {
+                core::ptr::read(dir_buf.as_ptr().add(offset) as *const Fat32DirEntry)
+            };
+            
+            if entry.name == name_8_3 {
+                // 엔트리 업데이트
+                let entry_bytes = unsafe {
+                    core::slice::from_raw_parts(
+                        &new_entry as *const Fat32DirEntry as *const u8,
+                        size_of::<Fat32DirEntry>()
+                    )
+                };
+                dir_buf[offset..offset + size_of::<Fat32DirEntry>()].copy_from_slice(entry_bytes);
+                self.write_cluster(dir_cluster, &dir_buf)?;
+                return Ok(());
+            }
+        }
+        
+        Err(FsError::NotFound)
+    }
+    
     /// 디렉토리에 새 엔트리 추가
     /// 
     /// # Arguments
@@ -927,14 +1064,63 @@ impl FileSystem for Fat32FileSystem {
         Ok(())
     }
     
-    fn remove(&mut self, _path: &str) -> FsResult<()> {
-        // TODO: 파일/디렉토리 삭제 구현
-        Err(FsError::IOError)
+    fn remove(&mut self, path: &str) -> FsResult<()> {
+        if !self.mounted {
+            return Err(FsError::InvalidFilesystem);
+        }
+        
+        // 경로에서 부모 디렉토리와 파일명 분리
+        let (parent_path, filename) = self.split_path(path)?;
+        let (parent_cluster, _) = self.path_to_cluster(parent_path)?;
+        let (file_cluster, entry) = self.path_to_cluster(path)?;
+        
+        // 디렉토리인 경우 빈 디렉토리인지 확인
+        if entry.is_directory() {
+            if !self.is_directory_empty(file_cluster)? {
+                return Err(FsError::Busy);
+            }
+        }
+        
+        // FAT 체인 해제
+        self.free_cluster_chain(file_cluster)?;
+        
+        // 부모 디렉토리에서 엔트리 삭제
+        self.delete_directory_entry(parent_cluster, filename)?;
+        
+        Ok(())
     }
     
-    fn rename(&mut self, _old_path: &str, _new_path: &str) -> FsResult<()> {
-        // TODO: 이름 변경 구현
-        Err(FsError::IOError)
+    fn rename(&mut self, old_path: &str, new_path: &str) -> FsResult<()> {
+        if !self.mounted {
+            return Err(FsError::InvalidFilesystem);
+        }
+        
+        // 기존 파일 정보 가져오기
+        let (old_parent_path, old_filename) = self.split_path(old_path)?;
+        let (new_parent_path, new_filename) = self.split_path(new_path)?;
+        
+        let (old_parent_cluster, _) = self.path_to_cluster(old_parent_path)?;
+        let (new_parent_cluster, _) = self.path_to_cluster(new_parent_path)?;
+        let (file_cluster, mut entry) = self.path_to_cluster(old_path)?;
+        
+        // 새 파일명이 이미 존재하는지 확인
+        if self.find_directory_entry(new_parent_cluster, new_filename).is_ok() {
+            return Err(FsError::AlreadyExists);
+        }
+        
+        // 엔트리 이름 변경
+        entry.name = Self::name_to_8_3(new_filename);
+        
+        // 같은 디렉토리 내에서 이름만 변경하는 경우
+        if old_parent_cluster == new_parent_cluster {
+            self.update_directory_entry(old_parent_cluster, old_filename, entry)?;
+        } else {
+            // 다른 디렉토리로 이동
+            self.delete_directory_entry(old_parent_cluster, old_filename)?;
+            self.add_directory_entry(new_parent_cluster, entry)?;
+        }
+        
+        Ok(())
     }
     
     fn metadata(&mut self, path: &str) -> FsResult<FileMetadata> {

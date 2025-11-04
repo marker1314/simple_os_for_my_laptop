@@ -4,6 +4,8 @@
 
 pub mod vfs;
 pub mod fat32;
+pub mod path;
+pub mod cache;
 
 use crate::fs::vfs::{FileSystem, FsResult};
 use crate::fs::fat32::Fat32FileSystem;

@@ -32,6 +32,7 @@ A low-power laptop operating system kernel written in Rust. This is a completely
 - **GUI System**: VESA framebuffer-based graphical user interface with window management
 - **Input Devices**: PS/2 keyboard and mouse support with event handling
 - **GUI Applications**: Calculator, text editor, file manager, system monitor, and terminal emulator
+- **Multi-core Support**: SMP (Symmetric Multiprocessing) with APIC and load balancing
 
 ## 🎯 Goals
 
@@ -367,6 +368,22 @@ See [roadmap.md](roadmap.md) for detailed development roadmap.
 - [x] System monitor application (CPU/memory usage, process list)
 - [x] Terminal emulator (GUI-based terminal with command execution)
 
+**Phase 16: Multi-core Support (SMP) (Completed)**
+- [x] APIC (Advanced Programmable Interrupt Controller) driver
+- [x] Local APIC and I/O APIC initialization
+- [x] IPI (Inter-Processor Interrupt) mechanism
+- [x] CPU information management and detection
+- [x] Load balancer for multi-core task distribution
+- [x] Support for Round-Robin and Least-Loaded scheduling strategies
+
+**Phase 17: Enhanced Filesystem Features (Completed)**
+- [x] Path processing utilities with normalization and validation
+- [x] Block cache system with LRU replacement policy (up to 256 blocks)
+- [x] File and directory deletion (remove) functionality
+- [x] File and directory renaming/moving (rename) functionality
+- [x] Enhanced FAT32 operations (split_path, is_directory_empty, free_cluster_chain)
+- [x] Cache statistics and performance monitoring
+
 ### Planned Features
 
 **Mid-term Goals**
@@ -386,8 +403,8 @@ See [roadmap.md](roadmap.md) for detailed development roadmap.
 - [x] GUI system (framebuffer, window manager, widgets) - Completed
 - [x] Mouse driver (PS/2 mouse support) - Completed
 - [x] Advanced GUI applications (Calculator, Text Editor, File Manager, System Monitor, Terminal) - Completed
-- [ ] Multi-core support
-- [ ] Enhanced filesystem features
+- [x] Multi-core support (SMP with APIC and load balancing) - Completed
+- [x] Enhanced filesystem features (Path processing, block cache, delete/rename) - Completed
 - [ ] Application launcher and desktop environment
 
 ## 🛠️ Technology Stack

@@ -5,6 +5,7 @@
 pub mod thread;
 pub mod round_robin;
 pub mod context_switch;
+pub mod load_balancer;
 
 use alloc::sync::Arc;
 use spin::Mutex;
