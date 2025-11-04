@@ -4,9 +4,21 @@
 
 use crate::power::PowerError;
 use crate::boot::acpi_rsdp_addr;
+use x86_64::PhysAddr;
 
 /// ACPI RSDP 시그니처
 const RSDP_SIGNATURE: &[u8; 8] = b"RSD PTR ";
+
+/// I2C 장치 정보
+#[derive(Debug, Clone, Copy)]
+pub struct I2cDeviceInfo {
+    /// I2C 컨트롤러 물리 주소
+    pub base_address: PhysAddr,
+    /// I2C 슬레이브 주소
+    pub slave_address: u8,
+    /// HID (Hardware ID)
+    pub hid: [u8; 8],
+}
 
 /// ACPI 파서
 ///
@@ -83,5 +95,49 @@ impl AcpiParser {
     pub fn is_initialized(&self) -> bool {
         self.initialized
     }
+    
+    /// I2C 장치 검색
+    ///
+    /// ACPI DSDT 테이블에서 I2C HID 장치를 찾습니다.
+    /// 
+    /// # Returns
+    /// I2C 장치 정보 (찾지 못한 경우 None)
+    pub fn find_i2c_devices(&self) -> Option<I2cDeviceInfo> {
+        if !self.initialized {
+            return None;
+        }
+        
+        // TODO: 실제 DSDT 파싱 구현
+        // 현재는 HP 14s-dk0112AU의 알려진 값을 하드코딩
+        // 
+        // 실제 구현 시 필요한 작업:
+        // 1. RSDP -> RSDT/XSDT -> DSDT 탐색
+        // 2. DSDT AML 파싱
+        // 3. I2C HID 장치 (_HID, _CID 확인)
+        // 4. I2C 컨트롤러 베이스 주소 추출
+        // 5. I2C 슬레이브 주소 추출
+        
+        // AMD FCH I2C 컨트롤러 일반적인 주소: 0xFEDC3000 ~ 0xFEDC7000
+        // ELAN 트랙패드 일반적인 I2C 주소: 0x15
+        Some(I2cDeviceInfo {
+            base_address: PhysAddr::new(0xFEDC3000), // I2C 컨트롤러 0
+            slave_address: 0x15,                      // ELAN 트랙패드
+            hid: *b"PNP0C50\0",                      // I2C HID 장치 표준 HID
+        })
+    }
+}
+
+/// ACPI에서 I2C 장치 찾기 (전역 함수)
+///
+/// # Returns
+/// I2C 장치 정보 배열
+pub fn find_i2c_touchpad() -> Option<I2cDeviceInfo> {
+    // TODO: 실제 ACPI 테이블 파싱
+    // 현재는 하드코딩된 기본값 반환
+    Some(I2cDeviceInfo {
+        base_address: PhysAddr::new(0xFEDC3000),
+        slave_address: 0x15,
+        hid: *b"PNP0C50\0",
+    })
 }
 

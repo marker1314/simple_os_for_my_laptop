@@ -78,3 +78,14 @@ pub extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: x86_64::stru
     }
 }
 
+/// 지정된 밀리초 동안 대기
+///
+/// # Arguments
+/// * `ms` - 대기할 밀리초
+pub fn sleep_ms(ms: u64) {
+    let start = get_milliseconds();
+    while get_milliseconds() - start < ms {
+        x86_64::instructions::hlt();
+    }
+}
+

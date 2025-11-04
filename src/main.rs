@@ -183,6 +183,36 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
     }
     simple_os::log_info!("Mouse driver initialized");
     
+    // 18. I2C 및 트랙패드 드라이버 초기화 (선택적)
+    unsafe {
+        // ACPI에서 I2C 장치 정보 찾기
+        if let Some(i2c_info) = simple_os::power::acpi::find_i2c_touchpad() {
+            // I2C 컨트롤러 초기화
+            match simple_os::drivers::i2c::init_controller(0, i2c_info.base_address) {
+                Ok(()) => {
+                    simple_os::log_info!("I2C controller initialized at 0x{:X}", i2c_info.base_address.as_u64());
+                    
+                    // 트랙패드 초기화
+                    match simple_os::drivers::touchpad::init(i2c_info.slave_address) {
+                        Ok(()) => {
+                            simple_os::log_info!("ELAN touchpad initialized at I2C address 0x{:02X}", i2c_info.slave_address);
+                        }
+                        Err(e) => {
+                            simple_os::log_warn!("Failed to initialize touchpad: {:?}", e);
+                            simple_os::log_info!("Falling back to PS/2 mouse only");
+                        }
+                    }
+                }
+                Err(e) => {
+                    simple_os::log_warn!("Failed to initialize I2C controller: {:?}", e);
+                    simple_os::log_info!("Touchpad disabled, using PS/2 mouse only");
+                }
+            }
+        } else {
+            simple_os::log_info!("No I2C touchpad found, using PS/2 mouse only");
+        }
+    }
+    
     simple_os::log_info!("Kernel initialization complete");
     
     // 18. GUI 데스크톱 환경 시작 (프레임버퍼가 사용 가능한 경우)
@@ -200,6 +230,7 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
 /// 데스크톱 환경 메인 루프
 fn desktop_loop() -> ! {
     use simple_os::drivers::mouse;
+    use simple_os::drivers::touchpad;
     use simple_os::drivers::timer;
     
     let mut last_render_time = 0u64;
@@ -208,7 +239,14 @@ fn desktop_loop() -> ! {
     loop {
         let current_time = timer::get_milliseconds();
         
-        // 마우스 이벤트 처리
+        // 트랙패드 이벤트 폴링 (트랙패드가 초기화된 경우)
+        if touchpad::is_initialized() {
+            if let Some(event) = touchpad::poll_event() {
+                simple_os::gui::desktop_manager::handle_mouse_event(event);
+            }
+        }
+        
+        // PS/2 마우스 이벤트 처리 (백업 또는 외장 마우스)
         if let Some(event) = mouse::get_event() {
             simple_os::gui::desktop_manager::handle_mouse_event(event);
         }

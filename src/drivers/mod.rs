@@ -12,4 +12,7 @@ pub mod rtl8139;
 pub mod framebuffer;
 pub mod mouse;
 pub mod font;
+pub mod i2c;
+pub mod i2c_hid;
+pub mod touchpad;
 

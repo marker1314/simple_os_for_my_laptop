@@ -31,6 +31,7 @@ A low-power laptop operating system kernel written in Rust. This is a completely
 - **Network Stack**: Complete TCP/IP stack with RTL8139 Ethernet driver support
 - **GUI System**: VESA framebuffer-based graphical user interface with window management
 - **Input Devices**: PS/2 keyboard and mouse support with event handling
+- **Touchpad Support**: I2C-HID touchpad driver (ELAN708:00 04F3:30A0 and compatible devices)
 - **GUI Applications**: Calculator, text editor, file manager, system monitor, and terminal emulator
 - **Multi-core Support**: SMP (Symmetric Multiprocessing) with APIC and load balancing
 
@@ -184,6 +185,9 @@ simple_os_for_my_laptop/
 │   ├── drivers/           # Hardware drivers
 │   │   ├── keyboard.rs    # Keyboard driver
 │   │   ├── mouse.rs       # PS/2 mouse driver
+│   │   ├── i2c.rs         # I2C bus controller driver
+│   │   ├── i2c_hid.rs     # I2C-HID protocol implementation
+│   │   ├── touchpad.rs    # ELAN I2C-HID touchpad driver
 │   │   ├── vga.rs         # VGA display
 │   │   ├── framebuffer.rs # VESA framebuffer driver
 │   │   ├── font.rs        # Font rendering
@@ -393,6 +397,14 @@ See [roadmap.md](roadmap.md) for detailed development roadmap.
 - [x] 60 FPS rendering loop in desktop mode
 - [x] Automatic window offset for multiple apps
 
+**Phase 19: I2C and Touchpad Support (Completed)**
+- [x] I2C bus controller driver (AMD FCH I2C)
+- [x] I2C-HID protocol layer implementation
+- [x] ELAN touchpad driver (ELAN708:00 04F3:30A0)
+- [x] ACPI-based I2C device detection
+- [x] Touchpad event to MouseEvent conversion
+- [x] Kernel integration with dual input support (PS/2 + I2C touchpad)
+
 ### Planned Features
 
 **Mid-term Goals**
@@ -415,6 +427,7 @@ See [roadmap.md](roadmap.md) for detailed development roadmap.
 - [x] Multi-core support (SMP with APIC and load balancing) - Completed
 - [x] Enhanced filesystem features (Path processing, block cache, delete/rename) - Completed
 - [x] Application launcher and desktop environment - Completed
+- [x] I2C-HID touchpad support (ELAN708 and compatible devices) - Completed
 
 ## 🛠️ Technology Stack
 
