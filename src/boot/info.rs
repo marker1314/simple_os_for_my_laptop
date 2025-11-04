@@ -52,3 +52,20 @@ pub fn acpi_rsdp_addr() -> Option<u64> {
     }
 }
 
+/// 프레임버퍼 가져오기
+///
+/// # Safety
+/// `init`이 먼저 호출되어야 합니다.
+pub unsafe fn get_framebuffer() -> Option<&'static mut bootloader_api::info::FrameBuffer> {
+    BOOT_INFO.and_then(|info| {
+        match &info.framebuffer {
+            bootloader_api::info::Optional::Some(fb) => {
+                // FrameBuffer는 &'static Option<FrameBuffer>이므로 unsafe 변환 필요
+                let fb_ptr = fb as *const _ as *mut bootloader_api::info::FrameBuffer;
+                Some(&mut *fb_ptr)
+            }
+            bootloader_api::info::Optional::None => None,
+        }
+    })
+}
+

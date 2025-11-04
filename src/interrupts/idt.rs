@@ -42,6 +42,8 @@ pub unsafe fn init() {
     IDT[32].set_handler_fn(crate::drivers::timer::timer_interrupt_handler);
     // IRQ 1: 키보드 (인터럽트 33)
     IDT[33].set_handler_fn(crate::drivers::keyboard::keyboard_interrupt_handler);
+    // IRQ 12: PS/2 마우스 (인터럽트 44)
+    IDT[44].set_handler_fn(mouse_interrupt_handler);
 
     // IDT 로드
     IDT.load();
@@ -201,6 +203,17 @@ extern "x86-interrupt" fn virtualization_handler(stack_frame: InterruptStackFram
 /// 예외 핸들러: Security Exception (0x1E)
 extern "x86-interrupt" fn security_exception_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
     log_error!("Security Exception");
+}
+
+/// 하드웨어 인터럽트: PS/2 마우스 (IRQ 12)
+extern "x86-interrupt" fn mouse_interrupt_handler(_stack_frame: InterruptStackFrame) {
+    // 마우스 드라이버의 인터럽트 핸들러 호출
+    crate::drivers::mouse::handle_interrupt();
+    
+    // PIC에 EOI 전송 (IRQ 12는 슬레이브 PIC)
+    unsafe {
+        pic::send_eoi(12);
+    }
 }
 
 /// 인터럽트 활성화

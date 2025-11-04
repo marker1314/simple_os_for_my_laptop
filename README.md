@@ -29,14 +29,16 @@ A low-power laptop operating system kernel written in Rust. This is a completely
 - **Storage Support**: Full ATA/SATA disk driver with read/write capabilities
 - **Interactive Shell**: Command-line interface with disk management commands
 - **Network Stack**: Complete TCP/IP stack with RTL8139 Ethernet driver support
+- **GUI System**: VESA framebuffer-based graphical user interface with window management
+- **Input Devices**: PS/2 keyboard and mouse support with event handling
 
 ## 🎯 Goals
 
 ### Functional Goals
 - Independent operating system kernel implementation
-- Basic driver support (keyboard, display, storage, network)
+- Comprehensive driver support (keyboard, mouse, display, storage, network)
 - Power management system (ACPI parsing, dynamic scaling)
-- Basic Shell and GUI system
+- Interactive Shell and GUI system with graphical capabilities
 - Filesystem support (FAT32)
 
 ### Non-Functional Goals
@@ -179,7 +181,10 @@ simple_os_for_my_laptop/
 │   │   └── policy.rs      # Power policy management
 │   ├── drivers/           # Hardware drivers
 │   │   ├── keyboard.rs    # Keyboard driver
+│   │   ├── mouse.rs       # PS/2 mouse driver
 │   │   ├── vga.rs         # VGA display
+│   │   ├── framebuffer.rs # VESA framebuffer driver
+│   │   ├── font.rs        # Font rendering
 │   │   ├── timer.rs       # Timer
 │   │   ├── serial.rs      # Serial port
 │   │   ├── ata.rs         # ATA/SATA storage driver
@@ -201,16 +206,21 @@ simple_os_for_my_laptop/
 │   │   ├── mod.rs         # Filesystem module integration
 │   │   ├── vfs.rs         # Virtual Filesystem (VFS) interface
 │   │   └── fat32.rs       # FAT32 filesystem implementation
-│   └── net/               # Network stack
-│       ├── mod.rs         # Network module integration
-│       ├── ethernet.rs    # Ethernet driver interface
-│       ├── driver.rs      # Network driver management
-│       ├── ip.rs          # IP (IPv4) protocol
-│       ├── arp.rs         # ARP protocol
-│       ├── icmp.rs        # ICMP protocol
-│       ├── udp.rs         # UDP protocol
-│       ├── tcp.rs         # TCP protocol
-│       └── ethernet_frame.rs # Ethernet frame processing
+│   ├── net/               # Network stack
+│   │   ├── mod.rs         # Network module integration
+│   │   ├── ethernet.rs    # Ethernet driver interface
+│   │   ├── driver.rs      # Network driver management
+│   │   ├── ip.rs          # IP (IPv4) protocol
+│   │   ├── arp.rs         # ARP protocol
+│   │   ├── icmp.rs        # ICMP protocol
+│   │   ├── udp.rs         # UDP protocol
+│   │   ├── tcp.rs         # TCP protocol
+│   │   └── ethernet_frame.rs # Ethernet frame processing
+│   └── gui/               # GUI system
+│       ├── mod.rs         # GUI module integration
+│       ├── window.rs      # Window management
+│       ├── widget.rs      # GUI widgets (Button, TextBox)
+│       └── compositor.rs  # Display compositor
 ├── tests/                 # Integration tests
 ├── docs/                  # Additional documentation
 └── scripts/               # Build/run scripts
@@ -332,6 +342,16 @@ See [roadmap.md](roadmap.md) for detailed development roadmap.
 - [x] Ethernet frame processing module implementation
 - [x] Network stack module integration and kernel integration
 
+**Phase 14: GUI System Implementation (Completed)**
+- [x] VESA framebuffer driver implementation (pixel manipulation, color support)
+- [x] Basic graphics primitives (rectangle, circle, line drawing)
+- [x] Font rendering module implementation
+- [x] PS/2 mouse driver implementation (event handling, position tracking)
+- [x] Window management system implementation
+- [x] GUI widget system (Button, TextBox)
+- [x] Display compositor implementation
+- [x] GUI system kernel integration
+
 ### Planned Features
 
 **Mid-term Goals**
@@ -348,8 +368,11 @@ See [roadmap.md](roadmap.md) for detailed development roadmap.
 - [x] Actual network driver implementation (RTL8139) - Completed
 - [x] Network protocol stack (IP, TCP/UDP, ARP, ICMP) - Completed
 - [x] Interactive shell with disk management - Completed
-- [ ] GUI system
+- [x] GUI system (framebuffer, window manager, widgets) - Completed
+- [x] Mouse driver (PS/2 mouse support) - Completed
+- [ ] Advanced GUI applications
 - [ ] Multi-core support
+- [ ] Enhanced filesystem features
 
 ## 🛠️ Technology Stack
 
@@ -400,6 +423,7 @@ The license for this project has not yet been determined. A LICENSE file will be
 - [Writing an OS in Rust](https://os.phil-opp.com/) - Rust OS development tutorial
 - [The Embedded Rust Book](https://docs.rust-embedded.org/book/) - no_std Rust programming
 - [Operating Systems: Three Easy Pieces](http://pages.cs.wisc.edu/~remzi/OSTEP/) - Operating system theory
+- [OSDev Wiki](https://wiki.osdev.org/) - Comprehensive OS development reference
 
 ### Reference OS Projects
 - [Redox OS](https://github.com/redox-os/redox) - Unix-like OS written in Rust

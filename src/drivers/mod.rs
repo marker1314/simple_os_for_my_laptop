@@ -9,4 +9,7 @@ pub mod vga;
 pub mod ata;
 pub mod pci;
 pub mod rtl8139;
+pub mod framebuffer;
+pub mod mouse;
+pub mod font;
 

@@ -155,9 +155,37 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
         }
     }
     
+    // 16. 프레임버퍼 초기화 (GUI 지원)
+    unsafe {
+        if let Some(framebuffer) = simple_os::boot::get_framebuffer() {
+            simple_os::drivers::framebuffer::init(framebuffer);
+            simple_os::log_info!("Framebuffer initialized");
+            
+            // GUI 시스템 초기화
+            match simple_os::gui::init() {
+                Ok(()) => {
+                    simple_os::log_info!("GUI system initialized");
+                }
+                Err(e) => {
+                    simple_os::log_warn!("Failed to initialize GUI: {}", e);
+                }
+            }
+        } else {
+            simple_os::log_warn!("No framebuffer available, GUI disabled");
+        }
+    }
+    
+    // 17. 마우스 드라이버 초기화
+    unsafe {
+        simple_os::drivers::mouse::init();
+        // PIC에서 마우스 인터럽트 활성화 (IRQ 12)
+        simple_os::interrupts::pic::set_mask(12, true);
+    }
+    simple_os::log_info!("Mouse driver initialized");
+    
     simple_os::log_info!("Kernel initialization complete");
     
-    // 16. Shell 시작
+    // 18. Shell 시작
     simple_os::log_info!("Starting shell...");
     let mut shell = simple_os::shell::Shell::new();
     shell.run();
