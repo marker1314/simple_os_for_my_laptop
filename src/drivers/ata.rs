@@ -136,8 +136,7 @@ impl BlockDevice for AtaDriver {
     }
 }
 
-/// 전역 ATA 드라이버 인스턴스
-/// 
-/// TODO: 실제 구현 후 활성화
+// 전역 ATA 드라이버 인스턴스
+// TODO: 실제 구현 후 활성화
 // pub static ATA_DRIVER: Mutex<AtaDriver> = Mutex::new(AtaDriver::new());
 

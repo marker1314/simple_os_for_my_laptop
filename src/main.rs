@@ -115,8 +115,30 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
     simple_os::syscall::init_syscall_handler();
     simple_os::log_info!("System call handler initialized");
     
+    // 12. 파일시스템 초기화
+    // TODO: ATA 드라이버 구현 후 활성화
+    // unsafe {
+    //     match simple_os::drivers::ata::init_ata() {
+    //         Ok(device) => {
+    //             let mut fs_manager = simple_os::fs::FS_MANAGER.lock();
+    //             match fs_manager.mount_root(device) {
+    //                 Ok(()) => {
+    //                     simple_os::log_info!("Root filesystem mounted successfully");
+    //                 }
+    //                 Err(e) => {
+    //                     simple_os::log_warn!("Failed to mount root filesystem: {:?}", e);
+    //                 }
+    //             }
+    //         }
+    //         Err(e) => {
+    //             simple_os::log_warn!("Failed to initialize ATA driver: {:?}", e);
+    //         }
+    //     }
+    // }
+    simple_os::log_info!("Filesystem module ready (ATA driver pending)");
+    
     // TODO: 다음 단계 초기화
-    // 12. 전력 관리 초기화
+    // 13. 전력 관리 초기화
     
     simple_os::log_info!("Kernel initialization complete");
     

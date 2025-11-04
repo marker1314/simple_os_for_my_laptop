@@ -286,6 +286,110 @@ impl Fat32FileSystem {
         Ok(entry & 0x0FFFFFFF)
     }
     
+    /// FAT 엔트리 쓰기
+    /// 
+    /// # Arguments
+    /// * `cluster` - 클러스터 번호
+    /// * `value` - 쓸 값 (다음 클러스터 번호 또는 EOF 마커)
+    fn write_fat_entry(&mut self, cluster: u32, value: u32) -> FsResult<()> {
+        // FAT 오프셋 계산
+        let fat_offset = cluster * 4;
+        let fat_sector = self.boot_sector.fat_start_sector() + (fat_offset / 512) as u64;
+        let entry_offset = (fat_offset % 512) as usize;
+        
+        // FAT 섹터 읽기
+        let mut fat_buf = [0u8; 512];
+        self.device.read_block(fat_sector, &mut fat_buf)
+            .map_err(|_| FsError::IOError)?;
+        
+        // 엔트리 쓰기 (little-endian, 상위 4비트 보존)
+        let bytes = value.to_le_bytes();
+        fat_buf[entry_offset] = bytes[0];
+        fat_buf[entry_offset + 1] = bytes[1];
+        fat_buf[entry_offset + 2] = bytes[2];
+        fat_buf[entry_offset + 3] = bytes[3];
+        
+        // 모든 FAT 복사본에 쓰기
+        for fat_index in 0..self.boot_sector.num_fats {
+            let current_fat_sector = self.boot_sector.fat_start_sector() + 
+                (fat_index as u64 * self.boot_sector.sectors_per_fat_32 as u64) +
+                (fat_offset / 512) as u64;
+            
+            self.device.write_block(current_fat_sector, &fat_buf)
+                .map_err(|_| FsError::IOError)?;
+        }
+        
+        Ok(())
+    }
+    
+    /// 빈 클러스터 찾기
+    /// 
+    /// # Returns
+    /// 빈 클러스터 번호 또는 오류
+    fn find_free_cluster(&mut self) -> FsResult<u32> {
+        // 데이터 영역의 첫 번째 클러스터부터 검색
+        // 클러스터 2부터 시작 (0과 1은 예약됨)
+        let fat_start = self.boot_sector.fat_start_sector();
+        let sectors_per_fat = self.boot_sector.sectors_per_fat_32 as u64;
+        
+        // FAT의 각 섹터를 읽어서 빈 클러스터 찾기
+        let mut fat_buf = [0u8; 512];
+        for sector_offset in 0..sectors_per_fat {
+            let fat_sector = fat_start + sector_offset;
+            self.device.read_block(fat_sector, &mut fat_buf)
+                .map_err(|_| FsError::IOError)?;
+            
+            // 섹터 내의 각 엔트리 확인 (128개 엔트리 = 512바이트 / 4바이트)
+            for i in 0..128 {
+                let entry_offset = i * 4;
+                let entry = u32::from_le_bytes([
+                    fat_buf[entry_offset],
+                    fat_buf[entry_offset + 1],
+                    fat_buf[entry_offset + 2],
+                    fat_buf[entry_offset + 3],
+                ]) & 0x0FFFFFFF;
+                
+                let cluster = (sector_offset * 128 + i as u64) as u32;
+                
+                // 클러스터 0과 1은 예약됨
+                if cluster < 2 {
+                    continue;
+                }
+                
+                // 빈 클러스터 찾기 (0x00000000)
+                if entry == 0 {
+                    return Ok(cluster);
+                }
+            }
+        }
+        
+        Err(FsError::OutOfSpace)
+    }
+    
+    /// 클러스터에 데이터 쓰기
+    /// 
+    /// # Arguments
+    /// * `cluster` - 클러스터 번호
+    /// * `data` - 쓸 데이터 (클러스터 크기)
+    fn write_cluster(&mut self, cluster: u32, data: &[u8]) -> FsResult<()> {
+        let cluster_size = self.boot_sector.sectors_per_cluster as usize * 512;
+        if data.len() < cluster_size {
+            return Err(FsError::IOError);
+        }
+        
+        let sector = self.boot_sector.cluster_to_sector(cluster);
+        let mut offset = 0;
+        
+        for i in 0..self.boot_sector.sectors_per_cluster {
+            let sector_buf = &data[offset..offset + 512];
+            self.device.write_block(sector + i as u64, sector_buf)
+                .map_err(|_| FsError::IOError)?;
+            offset += 512;
+        }
+        
+        Ok(())
+    }
+    
     /// 클러스터 체인 읽기
     /// 
     /// # Arguments
@@ -325,6 +429,59 @@ impl Fat32FileSystem {
         Ok(offset)
     }
     
+    /// 단일 클러스터 읽기
+    /// 
+    /// # Arguments
+    /// * `cluster` - 클러스터 번호
+    /// * `buf` - 데이터를 저장할 버퍼 (최소 클러스터 크기)
+    /// 
+    /// # Returns
+    /// 읽은 바이트 수
+    fn read_single_cluster(&mut self, cluster: u32, buf: &mut [u8]) -> FsResult<usize> {
+        let cluster_size = self.boot_sector.sectors_per_cluster as usize * 512;
+        if buf.len() < cluster_size {
+            return Err(FsError::IOError);
+        }
+        
+        let sector = self.boot_sector.cluster_to_sector(cluster);
+        let mut offset = 0;
+        
+        for i in 0..self.boot_sector.sectors_per_cluster {
+            let mut sector_buf = [0u8; 512];
+            self.device.read_block(sector + i as u64, &mut sector_buf)
+                .map_err(|_| FsError::IOError)?;
+            
+            buf[offset..offset + 512].copy_from_slice(&sector_buf);
+            offset += 512;
+        }
+        
+        Ok(offset)
+    }
+    
+    /// 클러스터 번호로부터 오프셋에 해당하는 클러스터 찾기
+    /// 
+    /// # Arguments
+    /// * `start_cluster` - 시작 클러스터 번호
+    /// * `byte_offset` - 바이트 오프셋
+    /// 
+    /// # Returns
+    /// (클러스터 번호, 클러스터 내 오프셋)
+    fn find_cluster_for_offset(&mut self, start_cluster: u32, byte_offset: usize) -> FsResult<(u32, usize)> {
+        let cluster_size = self.boot_sector.sectors_per_cluster as usize * 512;
+        let cluster_index = byte_offset / cluster_size;
+        let cluster_offset = byte_offset % cluster_size;
+        
+        let mut cluster = start_cluster;
+        for _ in 0..cluster_index {
+            cluster = self.read_fat_entry(cluster)?;
+            if cluster >= 0x0FFFFFF8 {
+                return Err(FsError::IOError);
+            }
+        }
+        
+        Ok((cluster, cluster_offset))
+    }
+    
     /// 디렉토리 엔트리 찾기
     /// 
     /// # Arguments
@@ -357,6 +514,41 @@ impl Fat32FileSystem {
         }
         
         Err(FsError::NotFound)
+    }
+    
+    /// 경로를 디렉토리와 파일명으로 분리
+    /// 
+    /// # Arguments
+    /// * `path` - 파일/디렉토리 경로
+    /// 
+    /// # Returns
+    /// (디렉토리 클러스터, 파일명)
+    fn split_path(&mut self, path: &str) -> FsResult<(u32, &str)> {
+        let path = path.trim_start_matches('/');
+        if path.is_empty() {
+            return Ok((self.boot_sector.root_cluster(), ""));
+        }
+        
+        let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+        if components.is_empty() {
+            return Ok((self.boot_sector.root_cluster(), ""));
+        }
+        
+        if components.len() == 1 {
+            return Ok((self.boot_sector.root_cluster(), components[0]));
+        }
+        
+        // 디렉토리 경로 탐색
+        let mut current_cluster = self.boot_sector.root_cluster();
+        for i in 0..components.len() - 1 {
+            let entry = self.find_directory_entry(current_cluster, components[i])?;
+            if !entry.is_directory() {
+                return Err(FsError::NotADirectory);
+            }
+            current_cluster = entry.first_cluster();
+        }
+        
+        Ok((current_cluster, components[components.len() - 1]))
     }
     
     /// 경로를 클러스터 번호로 변환
@@ -408,6 +600,116 @@ impl Fat32FileSystem {
         
         Err(FsError::NotFound)
     }
+    
+    /// 파일명을 8.3 형식으로 변환
+    /// 
+    /// # Arguments
+    /// * `name` - 파일명
+    /// 
+    /// # Returns
+    /// 11바이트 배열 (8바이트 이름 + 3바이트 확장자)
+    fn name_to_8_3(name: &str) -> [u8; 11] {
+        let mut result = [b' '; 11];
+        let parts: Vec<&str> = name.split('.').collect();
+        
+        let basename = if parts.is_empty() { "" } else { parts[0] };
+        let ext = if parts.len() > 1 { parts[parts.len() - 1] } else { "" };
+        
+        // 기본 이름 (최대 8자)
+        let basename_bytes = basename.as_bytes();
+        let basename_len = core::cmp::min(8, basename_bytes.len());
+        for i in 0..basename_len {
+            result[i] = basename_bytes[i].to_ascii_uppercase();
+        }
+        
+        // 확장자 (최대 3자)
+        let ext_bytes = ext.as_bytes();
+        let ext_len = core::cmp::min(3, ext_bytes.len());
+        for i in 0..ext_len {
+            result[8 + i] = ext_bytes[i].to_ascii_uppercase();
+        }
+        
+        result
+    }
+    
+    /// 디렉토리에 새 엔트리 추가
+    /// 
+    /// # Arguments
+    /// * `dir_cluster` - 디렉토리 클러스터 번호
+    /// * `entry` - 추가할 디렉토리 엔트리
+    fn add_directory_entry(&mut self, dir_cluster: u32, entry: Fat32DirEntry) -> FsResult<()> {
+        let cluster_size = self.boot_sector.sectors_per_cluster as usize * 512;
+        let mut dir_buf = alloc::vec![0u8; cluster_size];
+        
+        // 디렉토리 데이터 읽기
+        let mut current_cluster = dir_cluster;
+        let mut found_empty = false;
+        let mut empty_cluster = 0;
+        let mut empty_offset = 0;
+        
+        loop {
+            self.read_single_cluster(current_cluster, &mut dir_buf)?;
+            
+            // 빈 엔트리 찾기
+            let num_entries = cluster_size / size_of::<Fat32DirEntry>();
+            for i in 0..num_entries {
+                let entry_ptr = dir_buf.as_ptr().add(i * size_of::<Fat32DirEntry>());
+                let existing_entry = unsafe {
+                    core::ptr::read(entry_ptr as *const Fat32DirEntry)
+                };
+                
+                if existing_entry.is_deleted() || existing_entry.name[0] == 0 {
+                    // 빈 엔트리 발견
+                    found_empty = true;
+                    empty_cluster = current_cluster;
+                    empty_offset = i * size_of::<Fat32DirEntry>();
+                    break;
+                }
+            }
+            
+            if found_empty {
+                break;
+            }
+            
+            // 다음 클러스터 확인
+            let next_cluster = self.read_fat_entry(current_cluster)?;
+            if next_cluster >= 0x0FFFFFF8 {
+                // 새 클러스터 할당 필요
+                let new_cluster = self.find_free_cluster()?;
+                self.write_fat_entry(current_cluster, new_cluster)?;
+                self.write_fat_entry(new_cluster, 0x0FFFFFFF)?; // EOF
+                
+                // 새 클러스터를 0으로 초기화
+                let mut empty_cluster_buf = alloc::vec![0u8; cluster_size];
+                self.write_cluster(new_cluster, &empty_cluster_buf)?;
+                
+                empty_cluster = new_cluster;
+                empty_offset = 0;
+                found_empty = true;
+                break;
+            }
+            
+            current_cluster = next_cluster;
+        }
+        
+        if !found_empty {
+            return Err(FsError::IOError);
+        }
+        
+        // 엔트리 쓰기
+        self.read_single_cluster(empty_cluster, &mut dir_buf)?;
+        let entry_bytes = unsafe {
+            core::slice::from_raw_parts(
+                &entry as *const Fat32DirEntry as *const u8,
+                size_of::<Fat32DirEntry>()
+            )
+        };
+        dir_buf[empty_offset..empty_offset + size_of::<Fat32DirEntry>()]
+            .copy_from_slice(entry_bytes);
+        self.write_cluster(empty_cluster, &dir_buf)?;
+        
+        Ok(())
+    }
 }
 
 impl FileSystem for Fat32FileSystem {
@@ -445,9 +747,62 @@ impl FileSystem for Fat32FileSystem {
         }))
     }
     
-    fn create_file(&mut self, _path: &str) -> FsResult<Box<dyn File>> {
-        // TODO: 파일 생성 구현
-        Err(FsError::IOError)
+    fn create_file(&mut self, path: &str) -> FsResult<Box<dyn File>> {
+        if !self.mounted {
+            return Err(FsError::InvalidFilesystem);
+        }
+        
+        // 경로 분리
+        let (dir_cluster, filename) = self.split_path(path)?;
+        
+        if filename.is_empty() {
+            return Err(FsError::InvalidPath);
+        }
+        
+        // 파일이 이미 존재하는지 확인
+        match self.find_directory_entry(dir_cluster, filename) {
+            Ok(_) => return Err(FsError::AlreadyExists),
+            Err(FsError::NotFound) => {},
+            Err(e) => return Err(e),
+        }
+        
+        // 빈 클러스터 할당
+        let first_cluster = self.find_free_cluster()?;
+        self.write_fat_entry(first_cluster, 0x0FFFFFFF)?; // EOF
+        
+        // 빈 클러스터 초기화
+        let cluster_size = self.boot_sector.sectors_per_cluster as usize * 512;
+        let mut empty_cluster = alloc::vec![0u8; cluster_size];
+        self.write_cluster(first_cluster, &empty_cluster)?;
+        
+        // 디렉토리 엔트리 생성
+        let name_8_3 = Self::name_to_8_3(filename);
+        let entry = Fat32DirEntry {
+            name: name_8_3,
+            attributes: 0, // 일반 파일
+            reserved: 0,
+            create_time_tenth: 0,
+            create_time: 0,
+            create_date: 0,
+            access_date: 0,
+            first_cluster_high: (first_cluster >> 16) as u16,
+            write_time: 0,
+            write_date: 0,
+            first_cluster_low: (first_cluster & 0xFFFF) as u16,
+            file_size: 0,
+        };
+        
+        // 디렉토리에 엔트리 추가
+        self.add_directory_entry(dir_cluster, entry)?;
+        
+        // 파일 열기
+        let (cluster, entry) = self.path_to_cluster(path)?;
+        Ok(Box::new(Fat32File {
+            filesystem: self,
+            entry,
+            cluster,
+            offset: 0,
+        }))
     }
     
     fn open_dir(&mut self, path: &str) -> FsResult<Box<dyn Directory>> {
@@ -466,9 +821,110 @@ impl FileSystem for Fat32FileSystem {
         }))
     }
     
-    fn create_dir(&mut self, _path: &str) -> FsResult<()> {
-        // TODO: 디렉토리 생성 구현
-        Err(FsError::IOError)
+    fn create_dir(&mut self, path: &str) -> FsResult<()> {
+        if !self.mounted {
+            return Err(FsError::InvalidFilesystem);
+        }
+        
+        // 경로 분리
+        let (dir_cluster, dirname) = self.split_path(path)?;
+        
+        if dirname.is_empty() {
+            return Err(FsError::InvalidPath);
+        }
+        
+        // 디렉토리가 이미 존재하는지 확인
+        match self.find_directory_entry(dir_cluster, dirname) {
+            Ok(_) => return Err(FsError::AlreadyExists),
+            Err(FsError::NotFound) => {},
+            Err(e) => return Err(e),
+        }
+        
+        // 빈 클러스터 할당
+        let first_cluster = self.find_free_cluster()?;
+        self.write_fat_entry(first_cluster, 0x0FFFFFFF)?; // EOF
+        
+        // 디렉토리 클러스터 초기화 (. 및 .. 엔트리 포함)
+        let cluster_size = self.boot_sector.sectors_per_cluster as usize * 512;
+        let mut dir_cluster_buf = alloc::vec![0u8; cluster_size];
+        
+        // . 엔트리 (현재 디렉토리)
+        let dot_entry = Fat32DirEntry {
+            name: *b".          ",
+            attributes: Fat32DirEntry::ATTR_DIRECTORY,
+            reserved: 0,
+            create_time_tenth: 0,
+            create_time: 0,
+            create_date: 0,
+            access_date: 0,
+            first_cluster_high: (first_cluster >> 16) as u16,
+            write_time: 0,
+            write_date: 0,
+            first_cluster_low: (first_cluster & 0xFFFF) as u16,
+            file_size: 0,
+        };
+        
+        // .. 엔트리 (상위 디렉토리)
+        let dotdot_cluster = if dir_cluster == self.boot_sector.root_cluster() {
+            0
+        } else {
+            dir_cluster
+        };
+        let dotdot_entry = Fat32DirEntry {
+            name: *b"..         ",
+            attributes: Fat32DirEntry::ATTR_DIRECTORY,
+            reserved: 0,
+            create_time_tenth: 0,
+            create_time: 0,
+            create_date: 0,
+            access_date: 0,
+            first_cluster_high: (dotdot_cluster >> 16) as u16,
+            write_time: 0,
+            write_date: 0,
+            first_cluster_low: (dotdot_cluster & 0xFFFF) as u16,
+            file_size: 0,
+        };
+        
+        // 엔트리 쓰기
+        let dot_bytes = unsafe {
+            core::slice::from_raw_parts(
+                &dot_entry as *const Fat32DirEntry as *const u8,
+                size_of::<Fat32DirEntry>()
+            )
+        };
+        let dotdot_bytes = unsafe {
+            core::slice::from_raw_parts(
+                &dotdot_entry as *const Fat32DirEntry as *const u8,
+                size_of::<Fat32DirEntry>()
+            )
+        };
+        
+        dir_cluster_buf[0..size_of::<Fat32DirEntry>()].copy_from_slice(dot_bytes);
+        dir_cluster_buf[size_of::<Fat32DirEntry>()..2 * size_of::<Fat32DirEntry>()]
+            .copy_from_slice(dotdot_bytes);
+        
+        self.write_cluster(first_cluster, &dir_cluster_buf)?;
+        
+        // 부모 디렉토리에 엔트리 추가
+        let name_8_3 = Self::name_to_8_3(dirname);
+        let entry = Fat32DirEntry {
+            name: name_8_3,
+            attributes: Fat32DirEntry::ATTR_DIRECTORY,
+            reserved: 0,
+            create_time_tenth: 0,
+            create_time: 0,
+            create_date: 0,
+            access_date: 0,
+            first_cluster_high: (first_cluster >> 16) as u16,
+            write_time: 0,
+            write_date: 0,
+            first_cluster_low: (first_cluster & 0xFFFF) as u16,
+            file_size: 0,
+        };
+        
+        self.add_directory_entry(dir_cluster, entry)?;
+        
+        Ok(())
     }
     
     fn remove(&mut self, _path: &str) -> FsResult<()> {
@@ -518,62 +974,130 @@ struct Fat32File<'a> {
 impl File for Fat32File<'_> {
     fn read(&mut self, buf: &mut [u8], offset: Option<Offset>) -> FsResult<usize> {
         let read_offset = offset.unwrap_or(self.offset);
-        if read_offset < 0 || read_offset as u64 >= self.entry.file_size as u64 {
+        if read_offset < 0 {
             return Ok(0);
         }
         
-        // 클러스터 체인에서 데이터 읽기
+        let file_size = self.entry.file_size as usize;
+        let read_offset = read_offset as usize;
+        
+        if read_offset >= file_size {
+            return Ok(0);
+        }
+        
         let cluster_size = self.filesystem.boot_sector.sectors_per_cluster as usize * 512;
         let mut cluster_buf = alloc::vec![0u8; cluster_size];
-        
-        // 시작 클러스터 찾기
-        let mut current_cluster = self.cluster;
-        let mut current_offset = read_offset as usize;
+        let mut current_offset = read_offset;
         let mut bytes_read = 0;
+        let max_read = core::cmp::min(buf.len(), file_size - read_offset);
         
-        while current_offset < self.entry.file_size as usize && bytes_read < buf.len() {
-            // 현재 오프셋이 속한 클러스터 찾기
-            let cluster_index = current_offset / cluster_size;
-            for _ in 0..cluster_index {
-                current_cluster = self.filesystem.read_fat_entry(current_cluster)?;
-                if current_cluster >= 0x0FFFFFF8 {
-                    break;
-                }
-            }
-            
-            if current_cluster >= 0x0FFFFFF8 {
-                break;
-            }
+        while current_offset < file_size && bytes_read < max_read {
+            // 현재 오프셋에 해당하는 클러스터 찾기
+            let (cluster, cluster_offset) = self.filesystem.find_cluster_for_offset(self.cluster, current_offset)?;
             
             // 클러스터 읽기
-            let cluster_offset = current_offset % cluster_size;
-            let read_len = self.filesystem.read_cluster_chain(current_cluster, &mut cluster_buf)?;
+            self.filesystem.read_single_cluster(cluster, &mut cluster_buf)?;
             
-            let copy_len = core::cmp::min(
-                core::cmp::min(read_len - cluster_offset, buf.len() - bytes_read),
-                self.entry.file_size as usize - current_offset,
+            // 버퍼에 복사할 데이터 길이 계산
+            let available_in_cluster = cluster_size - cluster_offset;
+            let remaining_in_file = file_size - current_offset;
+            let to_copy = core::cmp::min(
+                core::cmp::min(available_in_cluster, remaining_in_file),
+                max_read - bytes_read,
             );
             
-            buf[bytes_read..bytes_read + copy_len]
-                .copy_from_slice(&cluster_buf[cluster_offset..cluster_offset + copy_len]);
+            // 데이터 복사
+            buf[bytes_read..bytes_read + to_copy]
+                .copy_from_slice(&cluster_buf[cluster_offset..cluster_offset + to_copy]);
             
-            bytes_read += copy_len;
-            current_offset += copy_len;
-            
-            // 다음 클러스터로 이동
-            current_cluster = self.filesystem.read_fat_entry(current_cluster)?;
+            bytes_read += to_copy;
+            current_offset += to_copy;
         }
         
         if offset.is_none() {
-            self.offset = read_offset + bytes_read as Offset;
+            self.offset = (read_offset + bytes_read) as Offset;
         }
         
         Ok(bytes_read)
     }
     
-    fn write(&mut self, _buf: &[u8], _offset: Option<Offset>) -> FsResult<usize> {
-        // TODO: 쓰기 구현
-        Err(FsError::IOError)
+    fn write(&mut self, buf: &[u8], offset: Option<Offset>) -> FsResult<usize> {
+        let write_offset = offset.unwrap_or(self.offset);
+        if write_offset < 0 {
+            return Err(FsError::InvalidPath);
+        }
+        
+        let write_offset = write_offset as usize;
+        let cluster_size = self.filesystem.boot_sector.sectors_per_cluster as usize * 512;
+        let mut bytes_written = 0;
+        let mut current_offset = write_offset;
+        
+        while bytes_written < buf.len() {
+            // 현재 오프셋에 해당하는 클러스터 찾기 또는 할당
+            let (cluster, cluster_offset) = if current_offset < self.entry.file_size as usize {
+                // 기존 클러스터 사용
+                self.filesystem.find_cluster_for_offset(self.cluster, current_offset)?
+            } else {
+                // 새 클러스터 할당 필요
+                let last_cluster = if self.entry.file_size == 0 {
+                    self.cluster
+                } else {
+                    // 마지막 클러스터 찾기
+                    let mut cluster = self.cluster;
+                    loop {
+                        let next = self.filesystem.read_fat_entry(cluster)?;
+                        if next >= 0x0FFFFFF8 {
+                            break;
+                        }
+                        cluster = next;
+                    }
+                    cluster
+                };
+                
+                // 새 클러스터 할당
+                let new_cluster = self.filesystem.find_free_cluster()?;
+                if self.entry.file_size == 0 {
+                    // 첫 번째 클러스터 업데이트 필요 - 디렉토리 엔트리 업데이트 필요
+                    // 현재는 단순화를 위해 에러 반환
+                    return Err(FsError::IOError);
+                } else {
+                    self.filesystem.write_fat_entry(last_cluster, new_cluster)?;
+                }
+                self.filesystem.write_fat_entry(new_cluster, 0x0FFFFFFF)?;
+                
+                (new_cluster, 0)
+            };
+            
+            // 클러스터 읽기
+            let mut cluster_buf = alloc::vec![0u8; cluster_size];
+            self.filesystem.read_single_cluster(cluster, &mut cluster_buf)?;
+            
+            // 버퍼에 쓰기
+            let available_in_cluster = cluster_size - cluster_offset;
+            let to_write = core::cmp::min(available_in_cluster, buf.len() - bytes_written);
+            
+            cluster_buf[cluster_offset..cluster_offset + to_write]
+                .copy_from_slice(&buf[bytes_written..bytes_written + to_write]);
+            
+            // 클러스터 쓰기
+            self.filesystem.write_cluster(cluster, &cluster_buf)?;
+            
+            bytes_written += to_write;
+            current_offset += to_write;
+            
+            // 파일 크기 업데이트 (필요한 경우)
+            let new_size = current_offset as u32;
+            if new_size > self.entry.file_size {
+                self.entry.file_size = new_size;
+                // TODO: 디렉토리 엔트리 업데이트
+            }
+        }
+        
+        if offset.is_none() {
+            self.offset = (write_offset + bytes_written) as Offset;
+        }
+        
+        Ok(bytes_written)
     }
     
     fn metadata(&self) -> FsResult<FileMetadata> {
