@@ -169,8 +169,11 @@ simple_os_for_my_laptop/
 │   │   ├── round_robin.rs  # Round-Robin 스케줄러 구현
 │   │   └── context_switch.rs # 컨텍스트 스위칭 구현
 │   ├── power/             # 전력 관리
+│   │   ├── mod.rs         # 전력 관리 모듈 통합
+│   │   ├── manager.rs     # 전력 관리자
 │   │   ├── acpi.rs        # ACPI 파싱
-│   │   └── scaling.rs     # 동적 스케일링
+│   │   ├── scaling.rs     # 동적 스케일링
+│   │   └── policy.rs      # 전력 정책 관리
 │   ├── drivers/           # 하드웨어 드라이버
 │   │   ├── keyboard.rs    # 키보드 드라이버
 │   │   ├── vga.rs         # VGA 디스플레이
@@ -278,6 +281,15 @@ simple_os_for_my_laptop/
 - [x] FAT32 쓰기 기능 구현 (파일 생성, 디렉토리 생성, 파일 쓰기)
 - [x] 파일시스템 마운트 및 통합 (ATA 드라이버 구현 대기 중)
 
+**10단계: 전력 관리 시스템 구현 (완료)**
+- [x] 전력 관리자 구조 및 초기화 시스템 구현
+- [x] ACPI RSDP 주소 추출 및 파싱 기반 구축
+- [x] ACPI 테이블 파싱 모듈 구현 (RSDP, RSDT/XSDT, FADT 등)
+- [x] CPU 클럭 스케일링 모듈 구현 (P-State 제어)
+- [x] CPU 유휴 상태 관리 모듈 구현 (C-State 제어)
+- [x] 전력 정책 관리 시스템 구현
+- [x] 전력 관리 시스템 커널 통합
+
 ### 계획된 기능
 
 **중기 목표**
@@ -286,8 +298,8 @@ simple_os_for_my_laptop/
 - [x] 기본 Shell 구현
 
 **장기 목표**
-- [ ] 전력 관리 시스템 (ACPI 완전 파싱)
-- [ ] 동적 전력 스케일링
+- [x] 전력 관리 시스템 (ACPI 파싱 기반 구축) - 기본 구조 완료
+- [x] 동적 전력 스케일링 - 모듈 구현 완료
 - [x] 파일시스템 (FAT32) - 읽기/쓰기 기능 완료 (ATA 드라이버 구현 대기 중)
 - [ ] 네트워크 드라이버 및 스택
 - [ ] GUI 시스템

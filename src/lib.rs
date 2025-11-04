@@ -36,7 +36,7 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 pub mod boot;
 pub mod memory;
 pub mod scheduler;
-// pub mod power;
+pub mod power;
 pub mod drivers;
 pub mod interrupts;
 // pub mod sync;

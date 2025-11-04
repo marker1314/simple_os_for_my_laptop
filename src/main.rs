@@ -137,8 +137,18 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
     // }
     simple_os::log_info!("Filesystem module ready (ATA driver pending)");
     
-    // TODO: 다음 단계 초기화
     // 13. 전력 관리 초기화
+    unsafe {
+        match simple_os::power::init() {
+            Ok(()) => {
+                simple_os::log_info!("Power management initialized");
+            }
+            Err(e) => {
+                simple_os::log_warn!("Failed to initialize power management: {:?}", e);
+                // 전력 관리 초기화 실패해도 커널은 계속 실행 가능
+            }
+        }
+    }
     
     simple_os::log_info!("Kernel initialization complete");
     

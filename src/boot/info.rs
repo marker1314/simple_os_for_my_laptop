@@ -42,9 +42,12 @@ pub fn memory_map_len() -> usize {
 pub fn acpi_rsdp_addr() -> Option<u64> {
     unsafe {
         BOOT_INFO.and_then(|info| {
-            // bootloader 크레이트의 BootInfo에서 RSDP 주소 추출
-            // 실제 구현은 bootloader 버전에 따라 다를 수 있음
-            None // TODO: RSDP 주소 파싱 구현
+            // bootloader_api 0.11.12의 BootInfo에서 RSDP 주소 추출
+            // BootInfo 구조체의 rsdp_addr 필드 확인
+            match info.rsdp_addr {
+                bootloader_api::info::Optional::Some(addr) => Some(addr),
+                bootloader_api::info::Optional::None => None,
+            }
         })
     }
 }
