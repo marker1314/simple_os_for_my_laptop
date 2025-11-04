@@ -9,12 +9,12 @@
 #![reexport_test_harness_main = "test_main"]
 
 // 모듈 선언
-// pub mod boot;
+pub mod boot;
 // pub mod memory;
 // pub mod scheduler;
 // pub mod power;
 pub mod drivers;
-// pub mod interrupts;
+pub mod interrupts;
 // pub mod sync;
 // pub mod syscall;
 // pub mod fs;

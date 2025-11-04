@@ -204,9 +204,17 @@ simple_os_for_my_laptop/
 - [x] QEMU 테스트 스크립트 작성 (Windows/Linux)
 - [x] 개발 환경 설정 가이드 작성
 
+**3단계: 부트로더 및 커널 초기화 (완료)**
+- [x] 부트로더 통합 (bootloader 크레이트)
+- [x] 부트 정보 파싱 및 저장
+- [x] IDT (Interrupt Descriptor Table) 구현
+- [x] PIC (Programmable Interrupt Controller) 리매핑
+- [x] 예외 핸들러 구현 (모든 x86_64 예외)
+- [x] 인터럽트 활성화
+
 **초기 단계 (예정)**
-- [ ] 기본 커널 부팅
-- [ ] 인터럽트 핸들러 구현
+- [ ] 초기 메모리 맵 파싱
+- [ ] 가상 메모리 초기화
 - [ ] 메모리 관리 기본 구현
 
 ### 계획된 기능

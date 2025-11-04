@@ -2,6 +2,6 @@
 //!
 //! 이 모듈은 부트로더와의 인터페이스 및 커널 초기화를 담당합니다.
 
-// TODO: 부트로더 정보 파싱 구현
-// TODO: 커널 초기화 함수 구현
+pub mod info;
 
+pub use info::{init as init_boot_info, get as get_boot_info, memory_map_len, acpi_rsdp_addr};
