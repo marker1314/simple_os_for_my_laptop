@@ -106,8 +106,12 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
     simple_os::vga_println!("==================");
     simple_os::vga_println!("Uptime: {} ms", simple_os::drivers::timer::get_milliseconds());
     
+    // 10. 스케줄러 초기화
+    // 시간 할당량: 10 타이머 틱 (약 10ms)
+    simple_os::scheduler::init(10);
+    simple_os::log_info!("Scheduler initialized");
+    
     // TODO: 다음 단계 초기화
-    // 10. 스케줄러 시작
     // 11. 전력 관리 초기화
     // 12. Shell/GUI 시작
     

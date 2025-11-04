@@ -68,6 +68,10 @@ pub extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: x86_64::stru
     // 타이머 틱 증가
     *TICK_COUNT.lock() += 1;
     
+    // 스케줄러 틱 처리
+    // TODO: 컨텍스트 스위칭이 필요하면 여기서 처리
+    crate::scheduler::tick();
+    
     // PIC에 인터럽트 종료 신호 전송 (IRQ 0)
     unsafe {
         pic::end_of_interrupt(0);

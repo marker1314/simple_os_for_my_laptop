@@ -164,6 +164,10 @@ simple_os_for_my_laptop/
 │   │   ├── paging.rs      # 가상 메모리 및 페이지 테이블 관리
 │   │   └── heap.rs        # 힙 할당자 (linked_list_allocator)
 │   ├── scheduler/         # 프로세스/스레드 스케줄러
+│   │   ├── mod.rs         # 스케줄러 모듈 통합
+│   │   ├── thread.rs       # 스레드 구조 및 컨텍스트 관리
+│   │   ├── round_robin.rs  # Round-Robin 스케줄러 구현
+│   │   └── context_switch.rs # 컨텍스트 스위칭 구현
 │   ├── power/             # 전력 관리
 │   │   ├── acpi.rs        # ACPI 파싱
 │   │   └── scaling.rs     # 동적 스케일링
@@ -173,6 +177,7 @@ simple_os_for_my_laptop/
 │   │   ├── timer.rs       # 타이머
 │   │   └── serial.rs      # 시리얼 포트
 │   ├── interrupts/        # 인터럽트 핸들러
+│   ├── logging.rs         # 로깅 시스템
 │   ├── sync/              # 동기화 프리미티브
 │   ├── syscall/           # 시스템 콜 인터페이스
 │   ├── fs/                # 파일시스템 인터페이스
@@ -229,15 +234,22 @@ simple_os_for_my_laptop/
 - [x] VGA 텍스트 모드 드라이버 (80x25 텍스트 출력)
 - [x] 드라이버 초기화 및 통합
 
+**6단계: 스케줄러 구현 (완료)**
+- [x] 스레드 구조 및 컨텍스트 관리 (Thread, ThreadContext)
+- [x] Round-Robin 스케줄러 구현
+- [x] 컨텍스트 스위칭 메커니즘
+- [x] 스레드 상태 관리 (Ready, Running, Blocked, Terminated)
+- [x] 시간 할당량 기반 스케줄링
+- [x] 스케줄러 초기화 및 통합
+
 **다음 단계 (진행 예정)**
-- [ ] 스케줄러 구현
 - [ ] 시스템 콜 인터페이스 설계 및 구현
 - [ ] 기본 Shell 구현
 
 ### 계획된 기능
 
 **중기 목표**
-- [ ] 스케줄러 구현
+- [x] 스케줄러 구현
 - [ ] 시스템 콜 인터페이스
 - [ ] 기본 Shell 구현
 
