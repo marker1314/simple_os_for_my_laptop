@@ -11,13 +11,20 @@
 
 use core::panic::PanicInfo;
 
+#[allow(unused_imports)]
+use simple_os::drivers::serial;
+
 /// 패닉 핸들러
 ///
 /// 커널 패닉이 발생했을 때 호출됩니다.
 /// 현재는 무한 루프에 빠지지만, 향후 로깅 및 복구 기능을 추가할 예정입니다.
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    // TODO: 시리얼 포트나 VGA를 통한 패닉 메시지 출력
+    // 시리얼 포트를 통한 패닉 메시지 출력
+    simple_os::serial_println!("\n=== KERNEL PANIC ===");
+    simple_os::serial_println!("{}", info);
+    simple_os::serial_println!("===================\n");
+    
     loop {
         // 패닉 발생 시 무한 루프
         x86_64::instructions::hlt();
@@ -50,14 +57,20 @@ pub extern "C" fn _start() -> ! {
 ///
 /// 모든 커널 모듈을 순서대로 초기화합니다.
 fn kernel_init() {
+    // 1. 시리얼 포트 초기화 (가장 먼저, 로깅을 위해 필요)
+    serial::init();
+    simple_os::log_info!("Simple OS Kernel Starting...");
+    
     // TODO: 초기화 순서에 따라 각 모듈 초기화
-    // 1. IDT 설정
-    // 2. 메모리 관리자 초기화
-    // 3. 힙 할당자 초기화
-    // 4. 인터럽트 활성화
-    // 5. 드라이버 초기화
-    // 6. 스케줄러 시작
-    // 7. 전력 관리 초기화
-    // 8. Shell/GUI 시작
+    // 2. IDT 설정
+    // 3. 메모리 관리자 초기화
+    // 4. 힙 할당자 초기화
+    // 5. 인터럽트 활성화
+    // 6. 드라이버 초기화
+    // 7. 스케줄러 시작
+    // 8. 전력 관리 초기화
+    // 9. Shell/GUI 시작
+    
+    simple_os::log_info!("Kernel initialization complete");
 }
 
