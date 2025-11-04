@@ -5,8 +5,11 @@
 
 use crate::drivers::pci::PciDevice;
 use crate::net::ethernet::{EthernetDriver, NetworkError, MacAddress, PacketBuffer};
+use crate::memory::{allocate_frame, paging};
+use crate::boot::info;
 use x86_64::instructions::port::Port;
-use spin::Mutex;
+use x86_64::VirtAddr;
+use x86_64::structures::paging::PhysFrame;
 
 /// RTL8139 PCI 벤더 ID
 const RTL8139_VENDOR_ID: u16 = 0x10EC;
@@ -21,6 +24,10 @@ const RTL8139_IMR: u16 = 0x3C;       // Interrupt Mask Register
 const RTL8139_ISR: u16 = 0x3E;       // Interrupt Status Register
 const RTL8139_TCR: u16 = 0x40;       // Transmit Configuration Register
 const RTL8139_RCR: u16 = 0x44;       // Receive Configuration Register
+const RTL8139_TXSTATUS0: u16 = 0x10; // Transmit Status 0
+const RTL8139_TXSTATUS1: u16 = 0x14; // Transmit Status 1
+const RTL8139_TXSTATUS2: u16 = 0x18; // Transmit Status 2
+const RTL8139_TXSTATUS3: u16 = 0x1C; // Transmit Status 3
 const RTL8139_TXADDR0: u16 = 0x20;  // Transmit Address 0
 const RTL8139_TXADDR1: u16 = 0x24;  // Transmit Address 1
 const RTL8139_TXADDR2: u16 = 0x28;  // Transmit Address 2
@@ -65,6 +72,27 @@ const TCR_MXDMA_SHIFT: u32 = 8;   // Max DMA Burst Size
 const RX_BUFFER_SIZE: usize = 8192;
 /// 최대 패킷 크기
 const MAX_PACKET_SIZE: usize = 1518;
+/// 송신 디스크립터 수
+const TX_DESCRIPTOR_COUNT: usize = 4;
+/// 최소 패킷 크기 (이더넷 최소 프레임 크기)
+const MIN_PACKET_SIZE: usize = 60;
+
+/// TXSTATUS 레지스터 비트
+const TXSTATUS_OWN: u32 = 0x2000_0000;  // Owner bit (1 = NIC owns, 0 = driver owns)
+const TXSTATUS_DSIZE_MASK: u32 = 0x0000_07FF; // Data size mask
+const TXSTATUS_CRS: u32 = 0x0000_8000;  // Carrier Sense Lost
+const TXSTATUS_TABT: u32 = 0x0000_4000; // Transmit Abort
+const TXSTATUS_OWC: u32 = 0x0000_2000;  // Out of Window Collision
+const TXSTATUS_CDH: u32 = 0x0000_1000;  // CD Heart Beat
+const TXSTATUS_OK: u32 = 0x0000_0800;   // Transmit OK
+
+/// 송신 버퍼 디스크립터
+struct TxDescriptor {
+    /// 물리 프레임 (None이면 사용 가능)
+    frame: Option<PhysFrame>,
+    /// 가상 주소 (물리 주소를 가상 주소로 변환한 것)
+    virt_addr: Option<*mut u8>,
+}
 
 /// RTL8139 드라이버 구조체
 pub struct Rtl8139Driver {
@@ -72,10 +100,16 @@ pub struct Rtl8139Driver {
     io_base: u16,
     /// MAC 주소
     mac_address: MacAddress,
-    /// 수신 버퍼 (물리 주소)
-    rx_buffer: Option<*mut u8>,
+    /// 수신 버퍼 프레임 (물리 메모리)
+    rx_buffer_frame: Option<PhysFrame>,
+    /// 수신 버퍼 가상 주소
+    rx_buffer_virt: Option<*mut u8>,
     /// 현재 수신 버퍼 포인터
     rx_current: u16,
+    /// 송신 디스크립터 (4개)
+    tx_descriptors: [TxDescriptor; TX_DESCRIPTOR_COUNT],
+    /// 현재 사용할 송신 디스크립터 인덱스
+    tx_current: usize,
     /// 초기화 여부
     initialized: bool,
     /// PCI 디바이스 정보
@@ -92,8 +126,16 @@ impl Rtl8139Driver {
         Self {
             io_base,
             mac_address: MacAddress([0; 6]),
-            rx_buffer: None,
+            rx_buffer_frame: None,
+            rx_buffer_virt: None,
             rx_current: 0,
+            tx_descriptors: [
+                TxDescriptor { frame: None, virt_addr: None },
+                TxDescriptor { frame: None, virt_addr: None },
+                TxDescriptor { frame: None, virt_addr: None },
+                TxDescriptor { frame: None, virt_addr: None },
+            ],
+            tx_current: 0,
             initialized: false,
             pci_device,
         }
@@ -176,24 +218,80 @@ impl Rtl8139Driver {
     
     /// 수신 버퍼 설정
     unsafe fn setup_rx_buffer(&mut self) -> Result<(), NetworkError> {
-        // 수신 버퍼 할당 (8KB, 8바이트 정렬 필요)
-        // TODO: 실제로는 물리 메모리 할당자를 사용해야 하지만,
-        // 초기 구현에서는 정적 버퍼를 사용하거나 힙 할당자를 사용합니다.
-        // 여기서는 간단히 힙 할당을 사용합니다 (실제로는 DMA를 위해 물리 메모리 필요)
+        // 수신 버퍼 할당 (8KB = 2 프레임, 8바이트 정렬 필요)
+        // RTL8139는 8KB 버퍼를 사용하므로 2개의 4KB 프레임 할당
+        let frame1 = allocate_frame().ok_or(NetworkError::BufferFull)?;
+        let frame2 = allocate_frame().ok_or(NetworkError::BufferFull)?;
         
-        // 임시로 null 포인터로 설정 (실제 구현에서는 물리 메모리 할당 필요)
-        // 실제 구현에서는 memory::allocate_physical_frame() 같은 함수 사용
-        self.rx_buffer = None;
+        // 첫 번째 프레임의 물리 주소를 사용 (RTL8139는 연속된 물리 메모리 필요)
+        // 실제로는 8KB가 연속된 물리 메모리여야 하지만, 간단한 구현을 위해
+        // 첫 번째 프레임만 사용하고 4KB 버퍼로 제한합니다
+        // TODO: 연속된 8KB 물리 메모리 할당 구현 필요
+        
+        let phys_addr = frame1.start_address();
+        self.rx_buffer_frame = Some(frame1);
+        
+        // 물리 주소를 가상 주소로 변환
+        let boot_info = info::get();
+        let phys_offset = paging::get_physical_memory_offset(boot_info);
+        let virt_addr = phys_offset + phys_addr.as_u64();
+        self.rx_buffer_virt = Some(virt_addr.as_mut_ptr());
         
         // 수신 버퍼 시작 주소 설정 (물리 주소)
-        // 실제로는 물리 주소를 사용해야 하지만, 초기 구현에서는 0으로 설정
-        self.write_u32(RTL8139_RX_BUF, 0);
+        self.write_u32(RTL8139_RX_BUF, phys_addr.as_u64() as u32);
         
         // 수신 버퍼 포인터 초기화
         self.rx_current = 0;
         self.write_u16(RTL8139_RX_BUF_PTR, 0);
         
+        crate::log_info!("RTL8139 RX buffer allocated at physical 0x{:X}", phys_addr.as_u64());
+        
         Ok(())
+    }
+    
+    /// 송신 버퍼 할당
+    unsafe fn allocate_tx_buffer(&mut self) -> Result<usize, NetworkError> {
+        // 사용 가능한 송신 디스크립터 찾기
+        for i in 0..TX_DESCRIPTOR_COUNT {
+            let idx = (self.tx_current + i) % TX_DESCRIPTOR_COUNT;
+            let desc = &mut self.tx_descriptors[idx];
+            
+            // 디스크립터가 비어있거나 사용 가능한지 확인
+            if desc.frame.is_none() {
+                // 새 프레임 할당
+                let frame = allocate_frame().ok_or(NetworkError::BufferFull)?;
+                let phys_addr = frame.start_address();
+                
+                // 물리 주소를 가상 주소로 변환
+                let boot_info = info::get();
+                let phys_offset = paging::get_physical_memory_offset(boot_info);
+                let virt_addr = phys_offset + phys_addr.as_u64();
+                
+                desc.frame = Some(frame);
+                desc.virt_addr = Some(virt_addr.as_mut_ptr());
+                
+                return Ok(idx);
+            }
+            
+            // 디스크립터가 사용 중인지 확인 (TXSTATUS의 OWN 비트 확인)
+            let txstatus_reg = match idx {
+                0 => RTL8139_TXSTATUS0,
+                1 => RTL8139_TXSTATUS1,
+                2 => RTL8139_TXSTATUS2,
+                3 => RTL8139_TXSTATUS3,
+                _ => unreachable!(),
+            };
+            
+            let status = self.read_u32(txstatus_reg);
+            if (status & TXSTATUS_OWN) == 0 {
+                // 드라이버가 소유권을 가지고 있음 (전송 완료 또는 에러)
+                // 버퍼를 재사용 가능
+                return Ok(idx);
+            }
+        }
+        
+        // 모든 디스크립터가 사용 중
+        Err(NetworkError::BufferFull)
     }
     
     /// 수신 설정
@@ -295,16 +393,52 @@ impl EthernetDriver for Rtl8139Driver {
         }
         
         unsafe {
-            // TODO: 실제 송신 구현
-            // 1. 송신 버퍼 할당 (물리 메모리)
+            // 1. 송신 버퍼 할당
+            let desc_idx = self.allocate_tx_buffer()?;
+            let desc = &mut self.tx_descriptors[desc_idx];
+            
+            let virt_addr = desc.virt_addr.expect("TX buffer not allocated");
+            let frame = desc.frame.expect("TX frame not allocated");
+            let phys_addr = frame.start_address();
+            
             // 2. 패킷 데이터를 송신 버퍼에 복사
+            // 최소 패킷 크기 보장 (패딩)
+            let packet_len = packet.length.max(MIN_PACKET_SIZE);
+            let buffer = core::slice::from_raw_parts_mut(virt_addr, packet_len);
+            buffer[..packet.length].copy_from_slice(&packet.data[..packet.length]);
+            if packet.length < MIN_PACKET_SIZE {
+                // 패딩을 0으로 채움
+                buffer[packet.length..].fill(0);
+            }
+            
             // 3. 송신 주소 레지스터에 물리 주소 설정
-            // 4. 송신 시작
+            let txaddr_reg = match desc_idx {
+                0 => RTL8139_TXADDR0,
+                1 => RTL8139_TXADDR1,
+                2 => RTL8139_TXADDR2,
+                3 => RTL8139_TXADDR3,
+                _ => unreachable!(),
+            };
+            self.write_u32(txaddr_reg, phys_addr.as_u64() as u32);
             
-            // 현재는 단순히 로그만 출력
-            crate::log_debug!("RTL8139: Sending packet (length: {})", packet.length);
+            // 4. 송신 시작 (TXSTATUS 레지스터에 길이 설정)
+            let txstatus_reg = match desc_idx {
+                0 => RTL8139_TXSTATUS0,
+                1 => RTL8139_TXSTATUS1,
+                2 => RTL8139_TXSTATUS2,
+                3 => RTL8139_TXSTATUS3,
+                _ => unreachable!(),
+            };
             
-            // 임시로 성공 반환 (실제 구현 필요)
+            // TXSTATUS에 패킷 길이 설정 (OWN 비트는 하드웨어가 설정)
+            let status = (packet_len as u32) & TXSTATUS_DSIZE_MASK;
+            self.write_u32(txstatus_reg, status);
+            
+            // 다음 송신 디스크립터로 이동
+            self.tx_current = (desc_idx + 1) % TX_DESCRIPTOR_COUNT;
+            
+            crate::log_debug!("RTL8139: Sent packet (length: {}, desc: {})", packet_len, desc_idx);
+            
             Ok(())
         }
     }
@@ -323,18 +457,88 @@ impl EthernetDriver for Rtl8139Driver {
                 return None;
             }
             
-            // TODO: 실제 수신 구현
-            // 1. 수신 버퍼에서 패킷 읽기
-            // 2. 패킷 헤더 파싱 (길이, 상태 등)
-            // 3. 패킷 데이터를 PacketBuffer로 복사
-            // 4. 수신 버퍼 포인터 업데이트
-            // 5. 인터럽트 상태 클리어
+            // 수신 버퍼 확인
+            let rx_buffer_virt = match self.rx_buffer_virt {
+                Some(ptr) => ptr,
+                None => {
+                    crate::log_error!("RTL8139: RX buffer not allocated");
+                    self.write_u16(RTL8139_ISR, ISR_ROK);
+                    return None;
+                }
+            };
+            
+            // 현재 읽기 위치 확인
+            let capr = self.read_u16(RTL8139_CAPR);
+            let cbr = self.read_u16(RTL8139_CBR);
+            
+            // 수신 버퍼가 비어있는지 확인
+            if capr == cbr {
+                // 버퍼가 비어있음
+                self.write_u16(RTL8139_ISR, ISR_ROK);
+                return None;
+            }
+            
+            // 패킷 헤더 읽기 (4바이트: 상태 u16, 길이 u16)
+            let rx_offset = self.rx_current as usize;
+            if rx_offset + 4 > RX_BUFFER_SIZE {
+                // 버퍼 오버플로우 방지
+                self.rx_current = 0;
+                self.write_u16(RTL8139_ISR, ISR_ROK);
+                return None;
+            }
+            
+            let buffer = core::slice::from_raw_parts(rx_buffer_virt, RX_BUFFER_SIZE);
+            let status = u16::from_le_bytes([buffer[rx_offset], buffer[rx_offset + 1]]);
+            let packet_len = u16::from_le_bytes([buffer[rx_offset + 2], buffer[rx_offset + 3]]) as usize;
+            
+            // 패킷 길이 검증
+            if packet_len == 0 || packet_len > MAX_PACKET_SIZE || packet_len < 4 {
+                crate::log_warn!("RTL8139: Invalid packet length: {}", packet_len);
+                // 잘못된 패킷 건너뛰기
+                self.rx_current = (self.rx_current as usize + packet_len + 4) as u16;
+                if self.rx_current as usize >= RX_BUFFER_SIZE {
+                    self.rx_current = 0;
+                }
+                self.write_u16(RTL8139_RX_BUF_PTR, self.rx_current);
+                self.write_u16(RTL8139_ISR, ISR_ROK);
+                return None;
+            }
+            
+            // 패킷 데이터 읽기 (헤더 제외)
+            let data_start = rx_offset + 4;
+            if data_start + packet_len > RX_BUFFER_SIZE {
+                // 버퍼 오버플로우
+                crate::log_warn!("RTL8139: Packet extends beyond buffer");
+                self.rx_current = 0;
+                self.write_u16(RTL8139_RX_BUF_PTR, 0);
+                self.write_u16(RTL8139_ISR, ISR_ROK);
+                return None;
+            }
+            
+            // PacketBuffer 생성
+            let mut packet = PacketBuffer::new();
+            packet.length = packet_len;
+            packet.data[..packet_len].copy_from_slice(&buffer[data_start..data_start + packet_len]);
+            
+            // 수신 버퍼 포인터 업데이트
+            self.rx_current = (data_start + packet_len) as u16;
+            // 4바이트 정렬
+            self.rx_current = ((self.rx_current + 3) & !3) as u16;
+            
+            // 버퍼 랩 처리
+            if self.rx_current as usize >= RX_BUFFER_SIZE {
+                self.rx_current = 0;
+            }
+            
+            // CAPR 업데이트 (하드웨어에 읽기 완료 알림)
+            self.write_u16(RTL8139_CAPR, self.rx_current.wrapping_sub(0x10));
             
             // 인터럽트 상태 클리어
             self.write_u16(RTL8139_ISR, ISR_ROK);
             
-            // 현재는 None 반환 (실제 구현 필요)
-            None
+            crate::log_debug!("RTL8139: Received packet (length: {})", packet_len);
+            
+            Some(packet)
         }
     }
     
