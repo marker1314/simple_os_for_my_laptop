@@ -115,29 +115,17 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
     simple_os::syscall::init_syscall_handler();
     simple_os::log_info!("System call handler initialized");
     
-    // 12. 파일시스템 초기화
-    // TODO: ATA 드라이버 구현 후 활성화
-    // unsafe {
-    //     match simple_os::drivers::ata::init_ata() {
-    //         Ok(device) => {
-    //             let mut fs_manager = simple_os::fs::FS_MANAGER.lock();
-    //             match fs_manager.mount_root(device) {
-    //                 Ok(()) => {
-    //                     simple_os::log_info!("Root filesystem mounted successfully");
-    //                 }
-    //                 Err(e) => {
-    //                     simple_os::log_warn!("Failed to mount root filesystem: {:?}", e);
-    //                 }
-    //             }
-    //         }
-    //         Err(e) => {
-    //             simple_os::log_warn!("Failed to initialize ATA driver: {:?}", e);
-    //         }
-    //     }
-    // }
-    simple_os::log_info!("Filesystem module ready (ATA driver pending)");
+    // 12. ATA 드라이버 초기화
+    unsafe {
+        simple_os::drivers::ata::init();
+    }
+    simple_os::log_info!("ATA driver initialization attempted");
     
-    // 13. 전력 관리 초기화
+    // 13. 파일시스템 초기화 (ATA가 감지된 경우)
+    // TODO: FAT32와 ATA를 완전히 통합한 후 활성화
+    simple_os::log_info!("Filesystem module ready");
+    
+    // 14. 전력 관리 초기화
     unsafe {
         match simple_os::power::init() {
             Ok(()) => {
@@ -150,7 +138,7 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
         }
     }
     
-    // 14. 네트워크 드라이버 초기화
+    // 15. 네트워크 드라이버 초기화
     unsafe {
         match simple_os::net::init_network() {
             Ok(()) => {
@@ -169,7 +157,7 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
     
     simple_os::log_info!("Kernel initialization complete");
     
-    // 15. Shell 시작
+    // 16. Shell 시작
     simple_os::log_info!("Starting shell...");
     let mut shell = simple_os::shell::Shell::new();
     shell.run();

@@ -26,6 +26,9 @@ A low-power laptop operating system kernel written in Rust. This is a completely
 - **Independent Implementation**: Completely independent kernel design from Linux
 - **Modular Architecture**: Extensible and maintainable structure
 - **no_std Environment**: Lightweight kernel running without the standard library
+- **Storage Support**: Full ATA/SATA disk driver with read/write capabilities
+- **Interactive Shell**: Command-line interface with disk management commands
+- **Network Stack**: Complete TCP/IP stack with RTL8139 Ethernet driver support
 
 ## 🎯 Goals
 
@@ -258,7 +261,7 @@ See [roadmap.md](roadmap.md) for detailed development roadmap.
 - [x] Timer driver (PIT-based, millisecond time tracking)
 - [x] Keyboard driver (PS/2 keyboard interrupt handling)
 - [x] VGA text mode driver (80x25 text output)
-- [x] ATA/SATA storage driver (block device interface, PIO mode)
+- [x] ATA/SATA storage driver (block device interface, PIO mode, read/write operations)
 - [x] Driver initialization and integration
 
 **Phase 6: Scheduler Implementation (Completed)**
@@ -281,16 +284,18 @@ See [roadmap.md](roadmap.md) for detailed development roadmap.
 - [x] Keyboard input processing (Enter, Backspace, Tab support)
 - [x] Command parsing and execution system
 - [x] Basic command implementation (help, clear, echo, uptime, exit)
+- [x] Disk management commands (disk, read, write)
 - [x] VGA text mode output integration
 - [x] Shell initialization and kernel integration
 
 **Phase 9: Filesystem Support Implementation (Completed)**
 - [x] Virtual Filesystem (VFS) interface implementation
 - [x] ATA block device driver interface implementation
+- [x] ATA driver read/write operations fully implemented
 - [x] FAT32 filesystem basic structure implementation
 - [x] FAT32 read functionality completion
 - [x] FAT32 write functionality implementation (file creation, directory creation, file writing)
-- [x] Filesystem mount and integration (pending ATA driver implementation)
+- [x] Filesystem mount and integration
 
 **Phase 10: Power Management System Implementation (Completed)**
 - [x] Power manager structure and initialization system implementation
@@ -335,12 +340,14 @@ See [roadmap.md](roadmap.md) for detailed development roadmap.
 - [x] Basic Shell implementation
 
 **Long-term Goals**
-- [x] Power management system (ACPI parsing foundation) - Basic structure completed
-- [x] Dynamic power scaling - Module implementation completed
-- [x] Filesystem (FAT32) - Read/write functionality completed (pending ATA driver implementation)
-- [x] PCI driver and network module basic structure - Interface and manager implementation completed
-- [x] Actual network driver implementation (RTL8139) - Basic structure completed (pending transmission/reception implementation)
-- [x] Network protocol stack (IP, TCP/UDP) - Basic structure completed (pending full TCP implementation)
+- [x] Power management system (ACPI parsing foundation) - Completed
+- [x] Dynamic power scaling - Completed
+- [x] Filesystem (FAT32) - Read/write functionality completed
+- [x] ATA/SATA storage driver - Fully implemented with read/write operations
+- [x] PCI driver and network module - Completed
+- [x] Actual network driver implementation (RTL8139) - Completed
+- [x] Network protocol stack (IP, TCP/UDP, ARP, ICMP) - Completed
+- [x] Interactive shell with disk management - Completed
 - [ ] GUI system
 - [ ] Multi-core support
 

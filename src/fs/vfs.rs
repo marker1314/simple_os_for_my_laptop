@@ -5,6 +5,7 @@
 
 use alloc::vec::Vec;
 use alloc::string::String;
+use alloc::boxed::Box;
 
 /// 파일 모드 및 권한
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
