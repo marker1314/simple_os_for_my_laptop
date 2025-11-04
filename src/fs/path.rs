@@ -211,7 +211,7 @@ impl core::fmt::Display for Path {
 mod tests {
     use super::*;
     
-    #[test]
+    #[test_case]
     fn test_path_parse() {
         let path = Path::parse("/home/user/file.txt").unwrap();
         assert!(path.absolute);
@@ -219,14 +219,14 @@ mod tests {
         assert_eq!(path.file_name(), Some("file.txt"));
     }
     
-    #[test]
+    #[test_case]
     fn test_path_normalize() {
         let path = Path::parse("/home/user/../admin/./file.txt").unwrap();
         let normalized = path.normalize();
         assert_eq!(normalized.to_string(), "/home/admin/file.txt");
     }
     
-    #[test]
+    #[test_case]
     fn test_path_join() {
         let base = Path::parse("/home/user").unwrap();
         let rel = Path::parse("documents/file.txt").unwrap();
@@ -234,7 +234,7 @@ mod tests {
         assert_eq!(joined.to_string(), "/home/user/documents/file.txt");
     }
     
-    #[test]
+    #[test_case]
     fn test_path_parent() {
         let path = Path::parse("/home/user/file.txt").unwrap();
         let parent = path.parent().unwrap();

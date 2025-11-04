@@ -13,7 +13,12 @@ pub fn enable_network_low_power() {
 }
 
 pub fn dpms_set_display_sleep(_sleep: bool) {
-    // TODO: Integrate with framebuffer/display path and ACPI _BCM/_BCL
+    // Integrate with framebuffer/display path; ACPI _BCM/_BCL pending
+    if _sleep {
+        crate::drivers::framebuffer::blank();
+    } else {
+        crate::drivers::framebuffer::unblank();
+    }
 }
 
 

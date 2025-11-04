@@ -60,6 +60,13 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
     }
     simple_os::log_info!("Boot info initialized");
     simple_os::log_info!("Memory map entries: {}", simple_os::boot::memory_map_len());
+    // 이전 크래시 보고
+    if let Some(dump) = simple_os::crash::take() {
+        simple_os::log_warn!(
+            "Previous crash detected: reason={} rip=0x{:x} code=0x{:x}",
+            dump.reason, dump.rip, dump.code
+        );
+    }
     
     // 3. PIC 리매핑
     unsafe {
@@ -137,6 +144,7 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
     
     // 13. 파일시스템 초기화 (ATA가 감지된 경우)
     // TODO: FAT32와 ATA를 완전히 통합한 후 활성화
+    #[cfg(feature = "fs")]
     simple_os::log_info!("Filesystem module ready");
     
     // 14. 전력 관리 초기화
@@ -153,18 +161,16 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
     }
     
     // 15. 네트워크 드라이버 초기화
+    #[cfg(feature = "net")]
     unsafe {
         match simple_os::net::init_network() {
             Ok(()) => {
                 simple_os::log_info!("Network driver initialized");
-                // MAC 주소 출력
                 if let Ok(mac) = simple_os::net::get_mac_address() {
                     simple_os::log_info!("Network MAC address: {}", mac);
                 }
-                // 프로파일별 네트워크 유휴 타임아웃 설정
                 match simple_os::config::profile::current_profile() {
                     simple_os::config::profile::Profile::PowerSaver => {
-                        // 유휴 10초 후 RX 정지
                         crate::drivers::rtl8139::set_idle_timeout_ms(10000);
                         simple_os::log_info!("Network idle timeout set to 10000ms (power_saver)");
                     }
@@ -173,25 +179,19 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
             }
             Err(e) => {
                 simple_os::log_warn!("Failed to initialize network driver: {:?}", e);
-                // 네트워크 드라이버 초기화 실패해도 커널은 계속 실행 가능
             }
         }
     }
     
     // 16. 프레임버퍼 초기화 (GUI 지원)
+    #[cfg(feature = "gui")]
     unsafe {
         if let Some(framebuffer) = simple_os::boot::get_framebuffer() {
             simple_os::drivers::framebuffer::init(framebuffer);
             simple_os::log_info!("Framebuffer initialized");
-            
-            // GUI 시스템 초기화
             match simple_os::gui::init() {
-                Ok(()) => {
-                    simple_os::log_info!("GUI system initialized");
-                }
-                Err(e) => {
-                    simple_os::log_warn!("Failed to initialize GUI: {}", e);
-                }
+                Ok(()) => { simple_os::log_info!("GUI system initialized"); }
+                Err(e) => { simple_os::log_warn!("Failed to initialize GUI: {}", e); }
             }
         } else {
             simple_os::log_warn!("No framebuffer available, GUI disabled");
@@ -207,6 +207,7 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
     simple_os::log_info!("Mouse driver initialized");
     
     // 18. I2C 및 트랙패드 드라이버 초기화 (선택적)
+    #[cfg(feature = "touchpad")]
     unsafe {
         // ACPI에서 I2C 장치 정보 찾기
         if let Some(i2c_info) = simple_os::power::acpi::find_i2c_touchpad() {
@@ -239,6 +240,7 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
     simple_os::log_info!("Kernel initialization complete");
     
     // 18. GUI 데스크톱 환경 시작 (프레임버퍼가 사용 가능한 경우)
+    #[cfg(feature = "gui")]
     if simple_os::drivers::framebuffer::is_initialized() {
         simple_os::log_info!("Starting desktop environment...");
         desktop_loop();
@@ -248,9 +250,16 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
         let mut shell = simple_os::shell::Shell::new();
         shell.run();
     }
+    #[cfg(not(feature = "gui"))]
+    {
+        simple_os::log_info!("Starting shell...");
+        let mut shell = simple_os::shell::Shell::new();
+        shell.run();
+    }
 }
 
 /// 데스크톱 환경 메인 루프
+#[cfg(feature = "gui")]
 fn desktop_loop() -> ! {
     use simple_os::drivers::mouse;
     use simple_os::drivers::touchpad;
@@ -314,7 +323,10 @@ fn desktop_loop() -> ! {
         // 디스크 유휴 관리
         simple_os::drivers::ata::maybe_enter_idle(current_time);
         // 네트워크 저전력 관리
+        #[cfg(feature = "net")]
         simple_os::net::low_power_tick(current_time);
+        // 전력 통계 틱
+        simple_os::power::stats::tick(current_time);
     }
 }
 

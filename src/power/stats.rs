@@ -1,6 +1,8 @@
 //! Power statistics collection (stub)
 
-#[derive(Default)]
+use spin::Mutex;
+
+#[derive(Default, Clone, Copy)]
 pub struct PowerStatistics {
     pub avg_power_mw: u32,
     pub peak_power_mw: u32,
@@ -26,6 +28,17 @@ impl PowerStatistics {
             self.peak_power_mw,
             self.energy_consumed_mj
         );
+    }
+}
+
+static STATS: Mutex<PowerStatistics> = Mutex::new(PowerStatistics::default());
+
+/// Periodic tick to accumulate stats and occasionally print a report
+pub fn tick(now_ms: u64) {
+    let mut s = STATS.lock();
+    s.uptime_ms = now_ms;
+    if now_ms % 10_000 == 0 {
+        s.print_report();
     }
 }
 

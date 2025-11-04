@@ -65,23 +65,17 @@ impl CpuScaling {
     /// # Safety
     /// 이 함수는 한 번만 호출되어야 합니다.
     pub unsafe fn init(&mut self) -> Result<(), PowerError> {
-        // MSR 접근 가능 여부 확인
-        // 보수적으로 지원 플래그만 설정 (실제 모델별 세부 감지는 TODO)
+        // Conservative detection: Only enable on GenuineIntel with EST feature bit
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         {
-            // EFER 읽기가 가능하면 대체로 MSR 접근 가능
-            let _ = Efer::read();
-            self.supported = true;
+            let (vendor, est) = cpuid_vendor_and_est();
+            self.supported = vendor == Vendor::Intel && est;
         }
         #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-        {
-            self.supported = false;
-        }
-        
-        // 기본 초기화 (실제 MSR 접근은 CPU 모델에 따라 다름)
+        { self.supported = false; }
+
         self.initialized = true;
-        self.current_p_state = 0; // 최고 성능 상태
-        
+        self.current_p_state = 0; // denote performance
         Ok(())
     }
     
@@ -160,5 +154,55 @@ impl CpuScaling {
     pub fn get_current_p_state(&self) -> u8 {
         self.current_p_state
     }
+}
+
+#[derive(PartialEq, Eq)]
+enum Vendor { Intel, Amd, Other }
+
+#[inline]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+fn cpuid_vendor_and_est() -> (Vendor, bool) {
+    let mut eax: u32;
+    let mut ebx: u32;
+    let mut ecx: u32;
+    let mut edx: u32;
+    unsafe {
+        core::arch::asm!(
+            "cpuid",
+            inlateout("eax") 0u32 => eax,
+            out("ebx") ebx,
+            out("ecx") ecx,
+            out("edx") edx,
+            options(nostack, preserves_flags)
+        );
+    }
+    let mut vendor_bytes = [0u8; 12];
+    vendor_bytes[0..4].copy_from_slice(&ebx.to_le_bytes());
+    vendor_bytes[4..8].copy_from_slice(&edx.to_le_bytes());
+    vendor_bytes[8..12].copy_from_slice(&ecx.to_le_bytes());
+    let vendor = match core::str::from_utf8(&vendor_bytes).unwrap_or("") {
+        "GenuineIntel" => Vendor::Intel,
+        "AuthenticAMD" => Vendor::Amd,
+        _ => Vendor::Other,
+    };
+
+    // Leaf 1 for feature flags
+    let mut eax1: u32 = 1;
+    let mut ebx1: u32;
+    let mut ecx1: u32;
+    let mut edx1: u32;
+    unsafe {
+        core::arch::asm!(
+            "cpuid",
+            inlateout("eax") eax1 => eax1,
+            out("ebx") ebx1,
+            out("ecx") ecx1,
+            out("edx") edx1,
+            options(nostack, preserves_flags)
+        );
+    }
+    // ECX bit 7 = EST (Intel Enhanced SpeedStep Technology) on Intel
+    let est = (ecx1 & (1 << 7)) != 0;
+    (vendor, est)
 }
 

@@ -241,3 +241,25 @@ pub fn send_ip_over_ethernet(
     crate::net::send_packet(&ethernet_buffer)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test_case]
+    fn ether_type_roundtrip() {
+        assert_eq!(u16::from(EtherType::Ipv4), 0x0800);
+        assert_eq!(u16::from(EtherType::Arp), 0x0806);
+        assert_eq!(EtherType::from(0x0800), EtherType::Ipv4);
+    }
+
+    #[test_case]
+    fn header_basic() {
+        let src = MacAddress([1,2,3,4,5,6]);
+        let dst = MacAddress([6,5,4,3,2,1]);
+        let mut h = EthernetHeader::new(src, dst, EtherType::Ipv4);
+        assert_eq!(h.src_mac(), src);
+        assert_eq!(h.dst_mac(), dst);
+        assert_eq!(h.ether_type(), EtherType::Ipv4);
+    }
+}
+

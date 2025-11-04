@@ -48,8 +48,26 @@ impl PowerManager {
         // ACPI 파서 초기화 시도
         match AcpiParser::new() {
             Ok(parser) => {
+                let mut parser = parser;
+                // Initialize ACPI to allow minimal table queries
+                match parser.init() {
+                    Ok(()) => {
+                        crate::log_info!("ACPI parser initialized");
+                        // Populate idle C-state hints
+                        let hints = parser.discover_c_states();
+                        let mut table: [Option<crate::power::idle::CState>; 8] = [None, None, None, None, None, None, None, None];
+                        for (i, opt) in hints.iter().enumerate() {
+                            if let Some(h) = opt {
+                                table[i] = Some(crate::power::idle::CState { level: h.level, latency_us: h.latency_us, power_mw: h.power_mw, mwait_hint: h.mwait_hint });
+                            }
+                        }
+                        crate::power::idle::set_default_cstates(table);
+                    }
+                    Err(e) => {
+                        crate::log_warn!("ACPI init failed: {:?}", e);
+                    }
+                }
                 self.acpi_parser = Some(parser);
-                crate::log_info!("ACPI parser initialized");
             }
             Err(e) => {
                 crate::log_warn!("Failed to initialize ACPI parser: {:?}", e);

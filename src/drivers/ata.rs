@@ -349,6 +349,8 @@ impl BlockDevice for AtaDriver {
         }
         
         unsafe {
+            // Record I/O activity timestamp
+            crate::drivers::ata::note_io_activity(crate::drivers::timer::get_milliseconds());
             self.resume_if_needed()?;
             // 드라이브 선택 및 LBA 모드 설정
             let drive_select = match self.drive {
@@ -401,6 +403,8 @@ impl BlockDevice for AtaDriver {
         }
         
         unsafe {
+            // Record I/O activity timestamp
+            crate::drivers::ata::note_io_activity(crate::drivers::timer::get_milliseconds());
             self.resume_if_needed()?;
             // 드라이브 선택 및 LBA 모드 설정
             let drive_select = match self.drive {
@@ -499,6 +503,8 @@ pub unsafe fn init() {
         Ok(()) => {
             crate::log_info!("[ATA] Primary Master initialized: {} sectors", driver.num_blocks());
             *PRIMARY_MASTER.lock() = Some(driver);
+            // seed last I/O timestamp
+            note_io_activity(crate::drivers::timer::get_milliseconds());
         }
         Err(e) => {
             crate::log_warn!("[ATA] Primary Master not found or error: {:?}", e);

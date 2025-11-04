@@ -421,6 +421,7 @@ impl EthernetDriver for Rtl8139Driver {
             // 활동 기록 및 필요시 수신 재개
             self.low_power = false;
             self.resume_receive();
+            crate::drivers::rtl8139::note_activity(crate::drivers::timer::get_milliseconds());
             // 1. 송신 버퍼 할당
             let desc_idx = self.allocate_tx_buffer()?;
             let desc = &mut self.tx_descriptors[desc_idx];
@@ -565,6 +566,7 @@ impl EthernetDriver for Rtl8139Driver {
             self.write_u16(RTL8139_ISR, ISR_ROK);
             
             crate::log_debug!("RTL8139: Received packet (length: {})", packet_len);
+            crate::drivers::rtl8139::note_activity(crate::drivers::timer::get_milliseconds());
             
             Some(packet)
         }
@@ -589,6 +591,7 @@ impl EthernetDriver for Rtl8139Driver {
                 crate::log_debug!("RTL8139: Receive OK, drained {} packets", drained);
                 // 활동이 있으니 저전력 해제
                 self.low_power = false;
+                crate::drivers::rtl8139::note_activity(crate::drivers::timer::get_milliseconds());
             }
 
             if (isr & ISR_TOK) != 0 {

@@ -164,6 +164,29 @@ impl AcpiParser {
     }
 }
 
+/// Minimal C-state descriptor for handoff to idle manager setup
+#[derive(Clone, Copy)]
+pub struct CStateDesc {
+    pub level: u8,
+    pub latency_us: u32,
+    pub power_mw: u32,
+    pub mwait_hint: u32,
+}
+
+impl AcpiParser {
+    /// Discover C-state hints (minimal; fallback values if parsing not implemented)
+    pub fn discover_c_states(&self) -> [Option<CStateDesc>; 8] {
+        if !self.initialized {
+            return [None, None, None, None, None, None, None, None];
+        }
+        // TODO: Parse _CST properly. For now, provide conservative hints:
+        // C1 (HLT), C3 (mwait-like hint), leave others None.
+        let c1 = Some(CStateDesc { level: 1, latency_us: 1, power_mw: 10000, mwait_hint: 0 });
+        let c3 = Some(CStateDesc { level: 3, latency_us: 100, power_mw: 2000, mwait_hint: 0x20 });
+        [c1, c3, None, None, None, None, None, None]
+    }
+}
+
 /// ACPI에서 I2C 장치 찾기 (전역 함수)
 ///
 /// # Returns

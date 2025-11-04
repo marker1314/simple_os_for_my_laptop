@@ -102,6 +102,7 @@ extern "x86-interrupt" fn invalid_opcode_handler(stack_frame: InterruptStackFram
     log_error!("Invalid Opcode Exception");
     log_error!("Stack Frame: {:#?}", stack_frame);
     log_error!("Instruction Pointer: {:#016x}", stack_frame.instruction_pointer.as_u64());
+    crate::crash::record_exception(stack_frame.instruction_pointer.as_u64(), 0x06);
     loop {
         x86_64::instructions::hlt();
     }
@@ -116,6 +117,7 @@ extern "x86-interrupt" fn device_not_available_handler(stack_frame: InterruptSta
 extern "x86-interrupt" fn double_fault_handler(stack_frame: InterruptStackFrame, _error_code: u64) -> ! {
     log_error!("Double Fault Exception - System Halted");
     log_error!("Stack Frame: {:#?}", stack_frame);
+    crate::crash::record_exception(stack_frame.instruction_pointer.as_u64(), 0x08);
     loop {
         x86_64::instructions::hlt();
     }
@@ -148,6 +150,7 @@ extern "x86-interrupt" fn stack_segment_fault_handler(stack_frame: InterruptStac
 extern "x86-interrupt" fn general_protection_fault_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
     log_error!("General Protection Fault Exception");
     log_error!("Stack Frame: {:#?}", stack_frame);
+    crate::crash::record_exception(stack_frame.instruction_pointer.as_u64(), 0x0D);
     loop {
         x86_64::instructions::hlt();
     }
@@ -165,6 +168,7 @@ extern "x86-interrupt" fn page_fault_handler(
     log_error!("Accessed Address: {:#016x}", accessed_address.as_u64());
     log_error!("Error Code: {:?}", error_code);
     log_error!("Stack Frame: {:#?}", stack_frame);
+    crate::crash::record_exception(stack_frame.instruction_pointer.as_u64(), 0x0E);
     
     // TODO: 페이지 폴트 처리 구현
     loop {

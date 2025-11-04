@@ -1,5 +1,7 @@
 //! CPU Idle (C-State) management
 
+use spin::Mutex;
+
 /// Represents a CPU C-State
 pub struct CState {
     pub level: u8,        // e.g., 0,1,2,3,6
@@ -15,8 +17,10 @@ pub struct IdleStateManager {
 }
 
 impl IdleStateManager {
-    pub const fn new() -> Self {
-        Self { available: [None, None, None, None, None, None, None, None], current: 0 }
+    pub fn new() -> Self {
+        // Snapshot current global defaults; if empty, we keep HLT fallback
+        let snapshot = get_default_cstates();
+        Self { available: snapshot, current: 0 }
     }
 
     #[inline]
@@ -61,6 +65,20 @@ impl IdleStateManager {
         }
         x86_64::instructions::hlt();
     }
+}
+
+// Global default C-state table populated by ACPI (or fallback)
+static DEFAULT_CSTATES: Mutex<[Option<CState>; 8]> = Mutex::new([None, None, None, None, None, None, None, None]);
+
+/// Update the global default C-states (called from power manager after ACPI init)
+pub fn set_default_cstates(cstates: [Option<CState>; 8]) {
+    let mut table = DEFAULT_CSTATES.lock();
+    *table = cstates;
+}
+
+/// Helper to read current default cstates (used by external callers if needed)
+pub fn get_default_cstates() -> [Option<CState>; 8] {
+    *DEFAULT_CSTATES.lock()
 }
 
 

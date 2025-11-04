@@ -24,8 +24,15 @@ power_saver = []
 performance = []
 headless = []
 
-# Default to balanced if no profile is chosen
-default = ["balanced"]
+# Subsystem gates
+net = []
+fs = []
+gui = []
+touchpad = []
+smp = []
+
+# Default to balanced and enable all subsystems for current behavior
+default = ["balanced", "net", "fs", "gui", "touchpad", "smp"]
 
 [profile.dev]
 panic = "abort"
