@@ -25,6 +25,8 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     crate::serial_println!("\n=== KERNEL PANIC ===");
     crate::serial_println!("{}", info);
     crate::serial_println!("===================\n");
+    // 최근 로그 덤프
+    crate::logging::dump_recent();
     
     loop {
         // 패닉 발생 시 무한 루프
@@ -48,6 +50,7 @@ pub mod gui;
 pub mod smp;
 
 pub mod logging;
+pub mod config;
 
 // 매크로는 자동으로 crate 루트에 사용 가능하므로 재export 불필요
 // 사용: simple_os::serial_println!() 또는 simple_os::log_info!()

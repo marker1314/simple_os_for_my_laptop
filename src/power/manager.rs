@@ -24,10 +24,16 @@ pub struct PowerManager {
 impl PowerManager {
     /// 새 전력 관리자 생성
     pub fn new() -> Result<Self, PowerError> {
+        // Choose default power mode based on build profile features
+        let default_mode = match crate::config::profile::current_profile() {
+            crate::config::profile::Profile::PowerSaver => PowerMode::PowerSaving,
+            crate::config::profile::Profile::Performance => PowerMode::Performance,
+            _ => PowerMode::Balanced,
+        };
         Ok(Self {
             acpi_parser: None,
             cpu_scaling: CpuScaling::new(),
-            policy: PowerPolicy::new(PowerMode::Balanced),
+            policy: PowerPolicy::new(default_mode),
             initialized: false,
         })
     }
@@ -99,9 +105,11 @@ impl PowerManager {
     /// # Safety
     /// 인터럽트가 활성화된 상태에서 호출되어야 합니다.
     pub unsafe fn enter_idle(&self) {
-        // 가장 깊은 가능한 C-State로 진입
-        // 현재는 기본 hlt 명령어만 사용
-        x86_64::instructions::hlt();
+        // 가장 깊은 가능한 C-State로 진입 (가능하면 MWAIT, 아니면 HLT)
+        // 인터럽트는 활성 상태여야 함
+        // 간단한 내장 관리자를 사용 (향후 ACPI 기반 채움)
+        let idle = crate::power::idle::IdleStateManager::new();
+        idle.enter_deepest();
     }
     
     /// CPU 사용률에 따른 동적 스케일링

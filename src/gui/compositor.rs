@@ -6,9 +6,11 @@ use super::window::Window;
 use crate::drivers::mouse::MouseEvent;
 use alloc::vec::Vec;
 use spin::Mutex;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 /// 컴포지터 전역 인스턴스
 static COMPOSITOR: Mutex<Compositor> = Mutex::new(Compositor::new());
+static NEEDS_REDRAW: AtomicBool = AtomicBool::new(true);
 
 /// 윈도우 컴포지터
 pub struct Compositor {
@@ -47,6 +49,7 @@ impl Compositor {
         for window in &self.windows {
             window.render();
         }
+        NEEDS_REDRAW.store(false, Ordering::Release);
     }
 
     /// 마우스 이벤트 처리
@@ -70,9 +73,11 @@ impl Compositor {
                         break;
                     }
                 }
+                NEEDS_REDRAW.store(true, Ordering::Release);
             }
             MouseEvent::LeftButtonUp(_, _) => {
                 self.dragging_window = None;
+                NEEDS_REDRAW.store(true, Ordering::Release);
             }
             MouseEvent::Move(x, y) => {
                 if let Some(window_index) = self.dragging_window {
@@ -80,6 +85,7 @@ impl Compositor {
                         let new_x = (x - self.drag_offset_x).max(0) as usize;
                         let new_y = (y - self.drag_offset_y).max(0) as usize;
                         window.move_to(new_x, new_y);
+                        NEEDS_REDRAW.store(true, Ordering::Release);
                     }
                 }
             }
@@ -117,6 +123,12 @@ pub fn remove_window(index: usize) {
 pub fn render_all() {
     COMPOSITOR.lock().render_all()
 }
+
+/// 외부에서 리드로우 요청
+pub fn request_redraw() { NEEDS_REDRAW.store(true, Ordering::Release); }
+
+/// 리드로우 필요 여부
+pub fn needs_redraw() -> bool { NEEDS_REDRAW.load(Ordering::Acquire) }
 
 /// 마우스 이벤트 처리
 pub fn handle_mouse_event(event: MouseEvent) {

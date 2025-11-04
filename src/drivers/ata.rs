@@ -41,6 +41,8 @@ const ATA_CMD_READ_PIO_EXT: u8 = 0x24;
 const ATA_CMD_WRITE_PIO: u8 = 0x30;
 const ATA_CMD_WRITE_PIO_EXT: u8 = 0x34;
 const ATA_CMD_CACHE_FLUSH: u8 = 0xE7;
+const ATA_CMD_STANDBY: u8 = 0xE2;
+const ATA_CMD_SLEEP: u8 = 0xE6;
 const ATA_CMD_IDENTIFY: u8 = 0xEC;
 
 // ATA 상태 비트
@@ -128,6 +130,7 @@ pub struct AtaDriver {
     control_port: Port<u8>,
     initialized: bool,
     num_sectors: u64,
+    standby: bool,
 }
 
 impl AtaDriver {
@@ -175,6 +178,7 @@ impl AtaDriver {
             control_port: Port::new(ctrl),
             initialized: false,
             num_sectors: 0,
+            standby: false,
         }
     }
     
@@ -250,6 +254,38 @@ impl AtaDriver {
         self.initialized = true;
         Ok(())
     }
+
+    /// 유휴 대기(standby) 전환 (디스크 스핀다운 가능)
+    pub unsafe fn enter_standby(&mut self) -> Result<(), BlockDeviceError> {
+        if !self.initialized { return Err(BlockDeviceError::NotReady); }
+        self.command_port.write(ATA_CMD_STANDBY);
+        if let Err(e) = self.wait_not_busy() { return Err(e); }
+        self.standby = true;
+        Ok(())
+    }
+
+    /// 슬립 진입 (깊은 절전, 웨이크에 더 오래 걸림)
+    pub unsafe fn enter_sleep(&mut self) -> Result<(), BlockDeviceError> {
+        if !self.initialized { return Err(BlockDeviceError::NotReady); }
+        self.command_port.write(ATA_CMD_SLEEP);
+        // 일부 컨트롤러는 즉시 응답하지 않음. 상태 확인 생략.
+        self.standby = true;
+        Ok(())
+    }
+
+    /// 필요한 경우 웨이크업
+    unsafe fn resume_if_needed(&mut self) -> Result<(), BlockDeviceError> {
+        if self.standby {
+            // 드라이브 선택 후 짧은 대기로 깨움
+            let drive_select = match self.drive { AtaDrive::Master => 0xA0, AtaDrive::Slave => 0xB0 };
+            self.drive_port.write(drive_select);
+            self.wait_400ns();
+            // 상태 안정화까지 대기
+            self.wait_not_busy()?;
+            self.standby = false;
+        }
+        Ok(())
+    }
     
     /// 드라이버가 초기화되었는지 확인
     pub fn is_initialized(&self) -> bool {
@@ -313,6 +349,7 @@ impl BlockDevice for AtaDriver {
         }
         
         unsafe {
+            self.resume_if_needed()?;
             // 드라이브 선택 및 LBA 모드 설정
             let drive_select = match self.drive {
                 AtaDrive::Master => 0xE0,  // LBA mode, master
@@ -364,6 +401,7 @@ impl BlockDevice for AtaDriver {
         }
         
         unsafe {
+            self.resume_if_needed()?;
             // 드라이브 선택 및 LBA 모드 설정
             let drive_select = match self.drive {
                 AtaDrive::Master => 0xE0,  // LBA mode, master
@@ -412,6 +450,41 @@ impl BlockDevice for AtaDriver {
 
 // 전역 ATA 드라이버 인스턴스 (Primary Master)
 pub static PRIMARY_MASTER: Mutex<Option<AtaDriver>> = Mutex::new(None);
+
+// 간단한 유휴 관리 상태
+struct AtaPowerConfig {
+    idle_timeout_ms: u64,
+    last_io_ms: u64,
+}
+
+static ATA_POWER: Mutex<AtaPowerConfig> = Mutex::new(AtaPowerConfig { idle_timeout_ms: 0, last_io_ms: 0 });
+
+/// ATA 전원관리: 유휴 타임아웃 설정 (0 = 비활성)
+pub fn set_idle_timeout_ms(ms: u64) {
+    let mut cfg = ATA_POWER.lock();
+    cfg.idle_timeout_ms = ms;
+}
+
+/// ATA 전원관리: I/O 발생 시 호출
+pub fn note_io_activity(now_ms: u64) {
+    let mut cfg = ATA_POWER.lock();
+    cfg.last_io_ms = now_ms;
+}
+
+/// ATA 전원관리: 현재 시간 기준으로 유휴라면 standby 진입 시도
+pub fn maybe_enter_idle(now_ms: u64) {
+    let timeout = { ATA_POWER.lock().idle_timeout_ms };
+    if timeout == 0 { return; }
+    let last = { ATA_POWER.lock().last_io_ms };
+    if now_ms.saturating_sub(last) < timeout { return; }
+    if let Some(mutex) = get_primary_master() {
+        if let Some(driver) = mutex.lock().as_mut() {
+            unsafe {
+                let _ = driver.enter_standby();
+            }
+        }
+    }
+}
 
 /// ATA 드라이버 초기화 함수
 /// 

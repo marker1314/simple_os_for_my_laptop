@@ -12,7 +12,7 @@ pub mod tcp;
 pub mod ethernet_frame;
 
 pub use ethernet::{MacAddress, PacketBuffer, NetworkError, EthernetDriver};
-pub use driver::{init as init_network, send_packet, receive_packet, get_mac_address};
+pub use driver::{init as init_network, send_packet, receive_packet, get_mac_address, low_power_tick};
 pub use ip::{Ipv4Address, IpProtocol};
 pub use arp::{resolve_ip, handle_arp_packet};
 pub use icmp::{handle_icmp_packet, ping};

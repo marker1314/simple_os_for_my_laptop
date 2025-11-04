@@ -8,6 +8,7 @@ use spin::Mutex;
 
 /// 프레임버퍼 전역 인스턴스
 static FRAMEBUFFER: Mutex<Option<FrameBufferWriter>> = Mutex::new(None);
+static DISPLAY_BLANKED: Mutex<bool> = Mutex::new(false);
 
 /// 프레임버퍼 Writer 구조체
 pub struct FrameBufferWriter {
@@ -267,6 +268,24 @@ pub fn init(framebuffer: &'static mut FrameBuffer) {
 /// 프레임버퍼가 초기화되었는지 확인
 pub fn is_initialized() -> bool {
     FRAMEBUFFER.lock().is_some()
+}
+
+/// 디스플레이가 블랭크 상태인지 여부
+pub fn is_blank() -> bool {
+    *DISPLAY_BLANKED.lock()
+}
+
+/// 디스플레이 블랭크 (검정으로 지우고 블랭크 상태로 표시)
+pub fn blank() {
+    if let Some(fb) = FRAMEBUFFER.lock().as_mut() {
+        fb.clear(Color::BLACK);
+    }
+    *DISPLAY_BLANKED.lock() = true;
+}
+
+/// 디스플레이 언블랭크
+pub fn unblank() {
+    *DISPLAY_BLANKED.lock() = false;
 }
 
 /// 프레임버퍼 정보 가져오기

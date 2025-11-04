@@ -37,6 +37,30 @@ impl IdleStateManager {
         }
         x86_64::instructions::hlt();
     }
+
+    #[inline]
+    pub unsafe fn enter_deepest(&self) {
+        // pick highest available level; fallback to HLT
+        let mut best: Option<&CState> = None;
+        for s in self.available.iter().flatten() {
+            match best {
+                Some(b) if s.level <= b.level => {}
+                _ => { best = Some(s); }
+            }
+        }
+        if let Some(state) = best {
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            {
+                core::arch::asm!(
+                    "mfence; mov eax, {hint:e}; xor ecx, ecx; mwait",
+                    hint = in(reg) state.mwait_hint,
+                    options(nostack, preserves_flags)
+                );
+                return;
+            }
+        }
+        x86_64::instructions::hlt();
+    }
 }
 
 

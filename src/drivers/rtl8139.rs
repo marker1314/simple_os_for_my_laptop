@@ -114,6 +114,8 @@ pub struct Rtl8139Driver {
     initialized: bool,
     /// PCI 디바이스 정보
     pci_device: PciDevice,
+    /// 저전력 수신 정지 상태
+    low_power: bool,
 }
 
 impl Rtl8139Driver {
@@ -138,6 +140,7 @@ impl Rtl8139Driver {
             tx_current: 0,
             initialized: false,
             pci_device,
+            low_power: false,
         }
     }
     
@@ -306,6 +309,28 @@ impl Rtl8139Driver {
         
         self.write_u32(RTL8139_RCR, rcr);
     }
+
+    /// 수신 정지 (저전력)
+    unsafe fn stop_receive(&self) {
+        // RCR_NO_RX 설정으로 Rx 차단
+        let mut rcr = self.read_u32(RTL8139_RCR);
+        rcr |= RCR_NO_RX;
+        self.write_u32(RTL8139_RCR, rcr);
+        // 수신 관련 인터럽트 마스크 해제
+        let mut imr = self.read_u16(RTL8139_IMR);
+        imr &= !IMR_ROK;
+        self.write_u16(RTL8139_IMR, imr);
+    }
+
+    /// 수신 재개
+    unsafe fn resume_receive(&self) {
+        let mut rcr = self.read_u32(RTL8139_RCR);
+        rcr &= !RCR_NO_RX;
+        self.write_u32(RTL8139_RCR, rcr);
+        // 인터럽트 복원
+        let imr = IMR_TOK | IMR_ROK | IMR_TER | IMR_RER;
+        self.write_u16(RTL8139_IMR, imr);
+    }
     
     /// 송신 설정
     unsafe fn setup_transmit(&self) {
@@ -393,6 +418,9 @@ impl EthernetDriver for Rtl8139Driver {
         }
         
         unsafe {
+            // 활동 기록 및 필요시 수신 재개
+            self.low_power = false;
+            self.resume_receive();
             // 1. 송신 버퍼 할당
             let desc_idx = self.allocate_tx_buffer()?;
             let desc = &mut self.tx_descriptors[desc_idx];
@@ -559,6 +587,8 @@ impl EthernetDriver for Rtl8139Driver {
                     if drained > 32 { break; } // avoid livelock
                 }
                 crate::log_debug!("RTL8139: Receive OK, drained {} packets", drained);
+                // 활동이 있으니 저전력 해제
+                self.low_power = false;
             }
 
             if (isr & ISR_TOK) != 0 {
@@ -588,5 +618,27 @@ impl EthernetDriver for Rtl8139Driver {
 pub fn is_rtl8139(pci_device: &PciDevice) -> bool {
     pci_device.vendor_id == RTL8139_VENDOR_ID && 
     pci_device.device_id == RTL8139_DEVICE_ID
+}
+
+// 전역 저전력 관리: 유휴 타임아웃과 상태
+struct NetPowerConfig { last_activity_ms: u64, idle_timeout_ms: u64 }
+static NET_POWER: spin::Mutex<NetPowerConfig> = spin::Mutex::new(NetPowerConfig { last_activity_ms: 0, idle_timeout_ms: 0 });
+
+/// 네트워크 전원관리: 유휴 타임아웃 설정 (0 = 비활성)
+pub fn set_idle_timeout_ms(ms: u64) { let mut c = NET_POWER.lock(); c.idle_timeout_ms = ms; }
+
+/// 네트워크 전원관리: 활동 기록
+pub fn note_activity(now_ms: u64) { let mut c = NET_POWER.lock(); c.last_activity_ms = now_ms; }
+
+/// 네트워크 전원관리: 유휴이면 RX 중지로 저전력 진입
+pub fn maybe_enter_low_power(now_ms: u64, driver: &mut Rtl8139Driver) {
+    let (last, timeout) = { let c = NET_POWER.lock(); (c.last_activity_ms, c.idle_timeout_ms) };
+    if timeout == 0 { return; }
+    if now_ms.saturating_sub(last) < timeout { return; }
+    if !driver.low_power && driver.initialized {
+        unsafe { driver.stop_receive(); }
+        driver.low_power = true;
+        crate::log_info!("RTL8139 entered low-power receive stop");
+    }
 }
 

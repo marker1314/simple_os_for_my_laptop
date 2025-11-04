@@ -36,6 +36,12 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // 메인 루프
     loop {
         // 유휴 상태에서 CPU를 대기 상태로 전환 (전력 절약)
+        if let Some(pm) = simple_os::power::get_manager() {
+            if let Some(manager) = pm.lock().as_ref() {
+                unsafe { manager.enter_idle(); }
+                continue;
+            }
+        }
         x86_64::instructions::hlt();
     }
 }
@@ -120,6 +126,14 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
         simple_os::drivers::ata::init();
     }
     simple_os::log_info!("ATA driver initialization attempted");
+    // 프로파일별 디스크 유휴 타임아웃 설정
+    match simple_os::config::profile::current_profile() {
+        simple_os::config::profile::Profile::PowerSaver => {
+            simple_os::drivers::ata::set_idle_timeout_ms(30000);
+            simple_os::log_info!("ATA idle timeout set to 30000ms (power_saver)");
+        }
+        _ => {}
+    }
     
     // 13. 파일시스템 초기화 (ATA가 감지된 경우)
     // TODO: FAT32와 ATA를 완전히 통합한 후 활성화
@@ -146,6 +160,15 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
                 // MAC 주소 출력
                 if let Ok(mac) = simple_os::net::get_mac_address() {
                     simple_os::log_info!("Network MAC address: {}", mac);
+                }
+                // 프로파일별 네트워크 유휴 타임아웃 설정
+                match simple_os::config::profile::current_profile() {
+                    simple_os::config::profile::Profile::PowerSaver => {
+                        // 유휴 10초 후 RX 정지
+                        crate::drivers::rtl8139::set_idle_timeout_ms(10000);
+                        simple_os::log_info!("Network idle timeout set to 10000ms (power_saver)");
+                    }
+                    _ => {}
                 }
             }
             Err(e) => {
@@ -236,6 +259,10 @@ fn desktop_loop() -> ! {
     let mut last_render_time = 0u64;
     let mut render_interval = 16u64; // adaptive: 16ms active, 33-100ms idle
     let mut last_input_time = 0u64;
+    let display_blank_timeout_ms: u64 = match simple_os::config::profile::current_profile() {
+        simple_os::config::profile::Profile::PowerSaver => 60_000,
+        _ => 0,
+    };
     
     loop {
         let current_time = timer::get_milliseconds();
@@ -245,6 +272,7 @@ fn desktop_loop() -> ! {
             if let Some(event) = touchpad::poll_event() {
                 simple_os::gui::desktop_manager::handle_mouse_event(event);
                 last_input_time = current_time;
+                if simple_os::drivers::framebuffer::is_blank() { simple_os::drivers::framebuffer::unblank(); }
             }
         }
         
@@ -252,19 +280,41 @@ fn desktop_loop() -> ! {
         if let Some(event) = mouse::get_event() {
             simple_os::gui::desktop_manager::handle_mouse_event(event);
             last_input_time = current_time;
+            if simple_os::drivers::framebuffer::is_blank() { simple_os::drivers::framebuffer::unblank(); }
         }
         
         // 주기적으로 화면 렌더링
-        if current_time - last_render_time >= render_interval {
-            simple_os::gui::desktop_manager::render();
+        if current_time - last_render_time >= render_interval || simple_os::gui::compositor::needs_redraw() {
+            if !simple_os::drivers::framebuffer::is_blank() {
+                simple_os::gui::desktop_manager::render();
+            }
             last_render_time = current_time;
             // 입력 유휴 시간에 따라 렌더 주기 조정
             let idle_ms = current_time.saturating_sub(last_input_time);
             render_interval = if idle_ms < 200 { 16 } else if idle_ms < 1000 { 33 } else { 100 };
         }
+        // 디스플레이 블랭크 처리
+        if display_blank_timeout_ms > 0 {
+            let idle_ms = current_time.saturating_sub(last_input_time);
+            if idle_ms >= display_blank_timeout_ms && !simple_os::drivers::framebuffer::is_blank() {
+                simple_os::drivers::framebuffer::blank();
+            }
+        }
         
         // CPU 절전
-        x86_64::instructions::hlt();
+        if let Some(pm) = simple_os::power::get_manager() {
+            if let Some(manager) = pm.lock().as_ref() {
+                unsafe { manager.enter_idle(); }
+            } else {
+                x86_64::instructions::hlt();
+            }
+        } else {
+            x86_64::instructions::hlt();
+        }
+        // 디스크 유휴 관리
+        simple_os::drivers::ata::maybe_enter_idle(current_time);
+        // 네트워크 저전력 관리
+        simple_os::net::low_power_tick(current_time);
     }
 }
 

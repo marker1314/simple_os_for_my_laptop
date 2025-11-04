@@ -21,6 +21,7 @@ pub enum Command {
     Disk,     // 디스크 정보 표시
     Read,     // 섹터 읽기 (테스트용)
     Write,    // 섹터 쓰기 (테스트용)
+    Power,    // 전력 관련 명령
 }
 
 impl Command {
@@ -35,6 +36,7 @@ impl Command {
             "disk" => Some(Command::Disk),
             "read" => Some(Command::Read),
             "write" => Some(Command::Write),
+            "power" => Some(Command::Power),
             _ => None,
         }
     }
@@ -50,6 +52,7 @@ impl Command {
             Command::Disk => self.cmd_disk(),
             Command::Read => self.cmd_read(args),
             Command::Write => self.cmd_write(args),
+            Command::Power => self.cmd_power(args),
         }
     }
 
@@ -63,6 +66,10 @@ impl Command {
         vga_println!("  disk              - Show disk information");
         vga_println!("  read <sector>     - Read a sector from disk (test)");
         vga_println!("  write <sector>    - Write test data to sector (test)");
+        vga_println!("  power status      - Show power profile and basic stats");
+        vga_println!("  power mode <m>    - Set mode: perf|balanced|powersave");
+        vga_println!("  power display off - Blank display now");
+        vga_println!("  power disk idle N - Set disk idle timeout ms (0=off)");
         vga_println!("  exit, quit        - Exit the shell (reboot simulation)");
         Ok(())
     }
@@ -238,6 +245,55 @@ impl Command {
             }
         } else {
             Err(String::from("No disk available"))
+        }
+    }
+
+    /// power 명령어: 전력 상태/설정
+    fn cmd_power(&self, args: &[&str]) -> Result<(), String> {
+        if args.is_empty() { return self.cmd_help(); }
+        match args[0] {
+            "status" => {
+                // 프로파일 및 정책 표시
+                let profile = crate::config::profile::current_profile();
+                vga_println!("Profile: {:?}", profile);
+                if let Some(pm) = crate::power::get_manager() { if let Some(m) = pm.lock().as_ref() {
+                    let mode = m.get_policy();
+                    vga_println!("Power mode: {}", mode.as_str());
+                }}
+                Ok(())
+            }
+            "mode" => {
+                if args.len() < 2 { return Err(String::from("Usage: power mode <perf|balanced|powersave>")); }
+                let mode = match args[1] {
+                    "perf" | "performance" => crate::power::policy::PowerMode::Performance,
+                    "balanced" => crate::power::policy::PowerMode::Balanced,
+                    "powersave" | "power_saving" => crate::power::policy::PowerMode::PowerSaving,
+                    _ => return Err(String::from("Invalid mode")),
+                };
+                if let Some(pm) = crate::power::get_manager() { if let Some(m) = pm.lock().as_mut() {
+                    if let Err(e) = m.set_policy(mode) { return Err(format!("Failed: {:?}", e)); }
+                    vga_println!("Set power mode to {}", mode.as_str());
+                    return Ok(());
+                }}
+                Err(String::from("Power manager not initialized"))
+            }
+            "display" => {
+                if args.len() >= 2 && args[1] == "off" {
+                    crate::drivers::framebuffer::blank();
+                    return Ok(());
+                }
+                Err(String::from("Usage: power display off"))
+            }
+            "disk" => {
+                if args.len() >= 3 && args[1] == "idle" {
+                    let ms: u64 = args[2].parse().map_err(|_| String::from("Invalid ms"))?;
+                    crate::drivers::ata::set_idle_timeout_ms(ms);
+                    vga_println!("Disk idle timeout set to {} ms", ms);
+                    return Ok(());
+                }
+                Err(String::from("Usage: power disk idle <ms>"))
+            }
+            _ => Err(String::from("Unknown power subcommand")),
         }
     }
 }

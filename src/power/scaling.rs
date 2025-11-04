@@ -44,6 +44,8 @@ pub struct CpuScaling {
     initialized: bool,
     /// 현재 P-State (Performance State)
     current_p_state: u8,
+    /// 제어 지원 여부 (CPUID/MSR 가드)
+    supported: bool,
 }
 
 impl CpuScaling {
@@ -52,6 +54,7 @@ impl CpuScaling {
         Self {
             initialized: false,
             current_p_state: 0,
+            supported: true,
         }
     }
     
@@ -63,8 +66,17 @@ impl CpuScaling {
     /// 이 함수는 한 번만 호출되어야 합니다.
     pub unsafe fn init(&mut self) -> Result<(), PowerError> {
         // MSR 접근 가능 여부 확인
-        // EFER 레지스터를 읽어 MSR 접근 가능 여부 확인
-        let efer = Efer::read();
+        // 보수적으로 지원 플래그만 설정 (실제 모델별 세부 감지는 TODO)
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        {
+            // EFER 읽기가 가능하면 대체로 MSR 접근 가능
+            let _ = Efer::read();
+            self.supported = true;
+        }
+        #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+        {
+            self.supported = false;
+        }
         
         // 기본 초기화 (실제 MSR 접근은 CPU 모델에 따라 다름)
         self.initialized = true;
@@ -79,6 +91,9 @@ impl CpuScaling {
     pub fn set_max_performance(&mut self) -> Result<(), PowerError> {
         if !self.initialized {
             return Err(PowerError::NotInitialized);
+        }
+        if !self.supported {
+            return Err(PowerError::Unsupported);
         }
         // Best effort: drive target ratio to current status' max observed ratio
         unsafe {
@@ -102,6 +117,9 @@ impl CpuScaling {
         if !self.initialized {
             return Err(PowerError::NotInitialized);
         }
+        if !self.supported {
+            return Err(PowerError::Unsupported);
+        }
         unsafe {
             let status = read_msr(IA32_PERF_STATUS);
             let cur: u16 = (status & 0xFF00) as u16 >> 8;
@@ -122,6 +140,9 @@ impl CpuScaling {
     pub fn set_power_saving(&mut self) -> Result<(), PowerError> {
         if !self.initialized {
             return Err(PowerError::NotInitialized);
+        }
+        if !self.supported {
+            return Err(PowerError::Unsupported);
         }
         unsafe {
             // Choose a conservative low ratio

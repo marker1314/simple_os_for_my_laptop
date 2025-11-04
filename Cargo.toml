@@ -17,6 +17,16 @@ spin = "0.9"
 uart_16550 = "0.2"
 linked_list_allocator = "0.10"
 
+[features]
+# Boot profiles
+balanced = []
+power_saver = []
+performance = []
+headless = []
+
+# Default to balanced if no profile is chosen
+default = ["balanced"]
+
 [profile.dev]
 panic = "abort"
 opt-level = 0

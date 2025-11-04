@@ -11,9 +11,13 @@ use alloc::boxed::Box;
 /// 네트워크 드라이버 매니저
 ///
 /// 네트워크 드라이버를 관리하고 패킷을 라우팅합니다.
+enum ActiveDriver {
+    Rtl8139(Rtl8139Driver),
+}
+
 pub struct NetworkDriverManager {
     /// 현재 사용 중인 이더넷 드라이버
-    driver: Option<Box<dyn EthernetDriver + Send>>,
+    driver: Option<ActiveDriver>,
     /// 초기화 여부
     initialized: bool,
     /// 네트워크 인터럽트 IRQ 번호
@@ -54,7 +58,7 @@ impl NetworkDriverManager {
             crate::log_info!("Initializing RTL8139 driver (IRQ: {})", pci_device.interrupt_line);
             let mut driver = Rtl8139Driver::new(pci_device);
             driver.init(&pci_device)?;
-            self.driver = Some(Box::new(driver));
+            self.driver = Some(ActiveDriver::Rtl8139(driver));
             self.initialized = true;
             
             // IRQ 번호 저장
@@ -80,28 +84,35 @@ impl NetworkDriverManager {
     
     /// 패킷 송신
     pub fn send_packet(&mut self, packet: &PacketBuffer) -> Result<(), NetworkError> {
-        if let Some(ref mut driver) = self.driver {
-            driver.send_packet(packet)
-        } else {
-            Err(NetworkError::NotInitialized)
+        match self.driver {
+            Some(ActiveDriver::Rtl8139(ref mut d)) => d.send_packet(packet),
+            None => Err(NetworkError::NotInitialized),
         }
     }
     
     /// 패킷 수신
     pub fn receive_packet(&mut self) -> Option<PacketBuffer> {
-        if let Some(ref mut driver) = self.driver {
-            driver.receive_packet()
-        } else {
-            None
+        match self.driver {
+            Some(ActiveDriver::Rtl8139(ref mut d)) => d.receive_packet(),
+            None => None,
         }
     }
     
     /// MAC 주소 가져오기
     pub fn get_mac_address(&self) -> Result<MacAddress, NetworkError> {
-        if let Some(ref driver) = self.driver {
-            driver.get_mac_address()
-        } else {
-            Err(NetworkError::NotInitialized)
+        match self.driver {
+            Some(ActiveDriver::Rtl8139(ref d)) => d.get_mac_address(),
+            None => Err(NetworkError::NotInitialized),
+        }
+    }
+
+    /// 저전력 유휴 진입 시도
+    pub fn maybe_low_power(&mut self, now_ms: u64) {
+        match self.driver {
+            Some(ActiveDriver::Rtl8139(ref mut d)) => {
+                crate::drivers::rtl8139::maybe_enter_low_power(now_ms, d);
+            }
+            None => {}
         }
     }
     
@@ -139,6 +150,12 @@ pub fn receive_packet() -> Option<PacketBuffer> {
 pub fn get_mac_address() -> Result<MacAddress, NetworkError> {
     let manager = NETWORK_MANAGER.lock();
     manager.get_mac_address()
+}
+
+/// 저전력 유휴 진입 시도 (주기적으로 호출)
+pub fn low_power_tick(now_ms: u64) {
+    let mut manager = NETWORK_MANAGER.lock();
+    manager.maybe_low_power(now_ms);
 }
 
 /// 네트워크 인터럽트 핸들러
