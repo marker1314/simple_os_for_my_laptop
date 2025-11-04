@@ -80,12 +80,10 @@ impl MemoryMap {
     /// 메모리 영역 파싱
     fn parse_region(region: &MemoryRegion) -> ParsedMemoryRegion {
         let start = PhysAddr::new(region.start);
-        let length = region.len;
+        let length = region.end - region.start;
         let memory_type = match region.kind {
             MemoryRegionKind::Usable => MemoryType::Usable,
-            MemoryRegionKind::Reserved => MemoryType::Reserved,
-            MemoryRegionKind::Kernel => MemoryType::Kernel,
-            MemoryRegionKind::Bootloader => MemoryType::Bootloader,
+            _ => MemoryType::Reserved, // Reserved, Kernel, Bootloader 등 모든 비사용 가능 영역
         };
 
         ParsedMemoryRegion {

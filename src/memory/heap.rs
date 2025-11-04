@@ -56,7 +56,7 @@ pub unsafe fn init_heap(
 
     // 할당자 초기화
     unsafe {
-        ALLOCATOR.lock().init(HEAP_START, HEAP_SIZE);
+        ALLOCATOR.lock().init(HEAP_START as *mut u8, HEAP_SIZE);
     }
 
     Ok(())

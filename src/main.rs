@@ -84,11 +84,32 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
         }
     }
     
+    // 7. 타이머 드라이버 초기화
+    unsafe {
+        simple_os::drivers::timer::init();
+        // PIC에서 타이머 인터럽트 활성화 (IRQ 0)
+        interrupts::pic::set_mask(0, true);
+    }
+    simple_os::log_info!("Timer driver initialized");
+    
+    // 8. 키보드 드라이버 초기화
+    unsafe {
+        simple_os::drivers::keyboard::init();
+        // PIC에서 키보드 인터럽트 활성화 (IRQ 1)
+        interrupts::pic::set_mask(1, true);
+    }
+    simple_os::log_info!("Keyboard driver initialized");
+    
+    // 9. VGA 드라이버 초기화
+    simple_os::drivers::vga::init();
+    simple_os::vga_println!("Simple OS Kernel");
+    simple_os::vga_println!("==================");
+    simple_os::vga_println!("Uptime: {} ms", simple_os::drivers::timer::get_milliseconds());
+    
     // TODO: 다음 단계 초기화
-    // 7. 드라이버 초기화
-    // 8. 스케줄러 시작
-    // 9. 전력 관리 초기화
-    // 10. Shell/GUI 시작
+    // 10. 스케줄러 시작
+    // 11. 전력 관리 초기화
+    // 12. Shell/GUI 시작
     
     simple_os::log_info!("Kernel initialization complete");
 }

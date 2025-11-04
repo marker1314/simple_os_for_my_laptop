@@ -3,7 +3,7 @@
 //! 이 모듈은 4KB 페이지 단위로 물리 메모리를 할당하고 해제합니다.
 
 use x86_64::PhysAddr;
-use x86_64::structures::paging::{FrameAllocator, PhysFrame, Size4KiB};
+use x86_64::structures::paging::{FrameAllocator, PhysFrame, PageSize, Size4KiB};
 use spin::Mutex;
 
 use crate::memory::map::{get as get_memory_map, MemoryType};
@@ -33,43 +33,32 @@ impl BootInfoFrameAllocator {
         unsafe {
             let memory_map = get_memory_map();
             
-            // 사용 가능한 영역을 순회하면서 프레임 찾기
-            // 전체 메모리 맵에서 usable 타입만 찾아야 하므로 인덱스를 추적
-            let mut usable_index = 0;
-            for region in memory_map.iter() {
-                if region.memory_type != MemoryType::Usable {
-                    continue;
-                }
+            // 사용 가능한 영역만 수집
+            let usable_regions: alloc::vec::Vec<_> = memory_map.usable_regions().collect();
+            
+            // 모든 사용 가능한 영역을 순회
+            while self.current_region_index < usable_regions.len() {
+                let region = usable_regions[self.current_region_index];
+                let start = region.start.as_u64();
+                let end = start + region.length;
                 
-                if usable_index < self.current_region_index {
-                    usable_index += 1;
-                    continue;
-                }
+                // 4KB 정렬
+                let aligned_start = align_up(start, Size4KiB::SIZE);
+                let aligned_end = align_down(end, Size4KiB::SIZE);
                 
-                if usable_index == self.current_region_index {
-                    let start = region.start.as_u64();
-                    let end = start + region.length;
+                if aligned_start < aligned_end {
+                    let frame_start = aligned_start + (self.current_frame_offset * Size4KiB::SIZE);
                     
-                    // 4KB 정렬
-                    let aligned_start = align_up(start, Size4KiB::SIZE);
-                    let aligned_end = align_down(end, Size4KiB::SIZE);
-                    
-                    if aligned_start < aligned_end {
-                        let frame_start = aligned_start + (self.current_frame_offset * Size4KiB::SIZE);
-                        
-                        if frame_start + Size4KiB::SIZE <= aligned_end {
-                            let frame = PhysFrame::containing_address(PhysAddr::new(frame_start));
-                            self.current_frame_offset += 1;
-                            return Some(frame);
-                        }
+                    if frame_start + Size4KiB::SIZE <= aligned_end {
+                        let frame = PhysFrame::containing_address(PhysAddr::new(frame_start));
+                        self.current_frame_offset += 1;
+                        return Some(frame);
                     }
-                    
-                    // 현재 영역의 모든 프레임을 사용했으므로 다음 영역으로
-                    self.current_region_index += 1;
-                    self.current_frame_offset = 0;
                 }
                 
-                usable_index += 1;
+                // 현재 영역의 모든 프레임을 사용했으므로 다음 영역으로
+                self.current_region_index += 1;
+                self.current_frame_offset = 0;
             }
             
             None

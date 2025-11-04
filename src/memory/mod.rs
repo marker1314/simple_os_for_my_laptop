@@ -26,7 +26,7 @@ use x86_64::structures::paging::Size4KiB;
 /// # Safety
 /// - `boot_info`는 유효한 BootInfo여야 합니다
 /// - 이 함수는 한 번만 호출되어야 합니다
-pub unsafe fn init(boot_info: &BootInfo) -> Result<(), MapToError<Size4KiB>> {
+pub unsafe fn init(boot_info: &'static BootInfo) -> Result<(), MapToError<Size4KiB>> {
     // 1. 메모리 맵 파싱
     map::init(&boot_info.memory_regions);
     crate::log_info!("Memory map parsed: {} regions", boot_info.memory_regions.len());

@@ -3,9 +3,7 @@
 //! 이 모듈은 다양한 하드웨어 장치의 드라이버를 포함합니다.
 
 pub mod serial;
-
-// TODO: 드라이버 인터페이스 정의
-// TODO: 키보드 드라이버 구현
-// TODO: VGA 드라이버 구현
-// TODO: 타이머 드라이버 구현
+pub mod timer;
+pub mod keyboard;
+pub mod vga;
 

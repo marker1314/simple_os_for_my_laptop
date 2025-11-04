@@ -37,8 +37,11 @@ pub unsafe fn init() {
     IDT.virtualization.set_handler_fn(virtualization_handler);
     IDT.security_exception.set_handler_fn(security_exception_handler);
 
-    // 하드웨어 인터럽트 (타이머 등은 드라이버에서 등록)
-    // IDT[32..48]은 PIC 인터럽트용으로 예약됨
+    // 하드웨어 인터럽트 (PIC 인터럽트)
+    // IRQ 0: 타이머 (인터럽트 32)
+    IDT[32].set_handler_fn(crate::drivers::timer::timer_interrupt_handler);
+    // IRQ 1: 키보드 (인터럽트 33)
+    IDT[33].set_handler_fn(crate::drivers::keyboard::keyboard_interrupt_handler);
 
     // IDT 로드
     IDT.load();

@@ -16,8 +16,6 @@ use bootloader_api::BootInfo;
 /// - `physical_memory_offset`는 부트로더가 설정한 물리 메모리 오프셋이어야 합니다
 /// - 페이지 테이블이 유효해야 합니다
 pub unsafe fn init_mapper(physical_memory_offset: VirtAddr) -> OffsetPageTable<'static> {
-    use x86_64::registers::control::Cr3;
-
     let level_4_table = active_level_4_table(physical_memory_offset);
     OffsetPageTable::new(level_4_table, physical_memory_offset)
 }
@@ -45,7 +43,11 @@ unsafe fn active_level_4_table(
 /// bootloader_api 0.11.12는 물리 메모리를 가상 주소 공간에 매핑합니다.
 pub fn get_physical_memory_offset(boot_info: &BootInfo) -> VirtAddr {
     // bootloader_api 0.11.12는 BootInfo에 physical_memory_offset 필드가 있습니다
-    boot_info.physical_memory_offset.into()
+    // Optional일 수 있으므로 처리 필요
+    match boot_info.physical_memory_offset {
+        bootloader_api::info::Optional::Some(offset) => VirtAddr::new(offset),
+        bootloader_api::info::Optional::None => VirtAddr::new(0),
+    }
 }
 
 /// 페이지 테이블 정보 출력 (디버깅용)
