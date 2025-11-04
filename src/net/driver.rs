@@ -3,8 +3,10 @@
 //! 이 모듈은 네트워크 드라이버를 관리하고 초기화합니다.
 
 use crate::drivers::pci;
+use crate::drivers::rtl8139::{Rtl8139Driver, is_rtl8139};
 use crate::net::ethernet::{EthernetDriver, NetworkError, MacAddress, PacketBuffer};
 use spin::Mutex;
+use alloc::boxed::Box;
 
 /// 네트워크 드라이버 매니저
 ///
@@ -14,6 +16,8 @@ pub struct NetworkDriverManager {
     driver: Option<Box<dyn EthernetDriver + Send>>,
     /// 초기화 여부
     initialized: bool,
+    /// 네트워크 인터럽트 IRQ 번호
+    irq: Option<u8>,
 }
 
 impl NetworkDriverManager {
@@ -22,6 +26,7 @@ impl NetworkDriverManager {
         Self {
             driver: None,
             initialized: false,
+            irq: None,
         }
     }
     
@@ -44,14 +49,33 @@ impl NetworkDriverManager {
         crate::log_info!("Found network device: Vendor=0x{:04X}, Device=0x{:04X}", 
                          pci_device.vendor_id, pci_device.device_id);
         
-        // TODO: 벤더 ID와 디바이스 ID에 따라 적절한 드라이버 선택
-        // 현재는 기본 이더넷 드라이버만 지원
-        
-        // 일단 드라이버 초기화는 나중에 구현
-        // 실제 드라이버 구현은 특정 하드웨어(예: RTL8139, e1000)에 따라 달라집니다
-        
-        self.initialized = true;
-        Ok(())
+        // 벤더 ID와 디바이스 ID에 따라 적절한 드라이버 선택
+        if is_rtl8139(&pci_device) {
+            crate::log_info!("Initializing RTL8139 driver (IRQ: {})", pci_device.interrupt_line);
+            let mut driver = Rtl8139Driver::new(pci_device);
+            driver.init(&pci_device)?;
+            self.driver = Some(Box::new(driver));
+            self.initialized = true;
+            
+            // IRQ 번호 저장
+            self.irq = Some(pci_device.interrupt_line);
+            
+            // 네트워크 인터럽트 핸들러 등록 및 활성화
+            let interrupt_num = crate::interrupts::pic::PIC1_OFFSET + pci_device.interrupt_line;
+            unsafe {
+                crate::interrupts::idt::IDT[interrupt_num as usize]
+                    .set_handler_fn(network_interrupt_handler);
+                crate::interrupts::pic::set_mask(pci_device.interrupt_line, true);
+            }
+            crate::log_info!("Network interrupt handler registered (IRQ {}, interrupt {})",
+                           pci_device.interrupt_line, interrupt_num);
+            
+            Ok(())
+        } else {
+            crate::log_warn!("Unsupported network device: Vendor=0x{:04X}, Device=0x{:04X}",
+                           pci_device.vendor_id, pci_device.device_id);
+            Err(NetworkError::DeviceNotFound)
+        }
     }
     
     /// 패킷 송신
@@ -115,5 +139,25 @@ pub fn receive_packet() -> Option<PacketBuffer> {
 pub fn get_mac_address() -> Result<MacAddress, NetworkError> {
     let manager = NETWORK_MANAGER.lock();
     manager.get_mac_address()
+}
+
+/// 네트워크 인터럽트 핸들러
+///
+/// 네트워크 인터럽트가 발생했을 때 호출됩니다.
+pub extern "x86-interrupt" fn network_interrupt_handler(
+    _stack_frame: x86_64::structures::idt::InterruptStackFrame
+) {
+    let mut manager = NETWORK_MANAGER.lock();
+    
+    if let Some(ref mut driver) = manager.driver {
+        driver.handle_interrupt();
+    }
+    
+    // PIC에 인터럽트 종료 신호 전송
+    if let Some(irq) = manager.irq {
+        unsafe {
+            crate::interrupts::pic::end_of_interrupt(irq);
+        }
+    }
 }
 

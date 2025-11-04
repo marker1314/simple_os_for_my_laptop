@@ -150,9 +150,26 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
         }
     }
     
+    // 14. 네트워크 드라이버 초기화
+    unsafe {
+        match simple_os::net::init_network() {
+            Ok(()) => {
+                simple_os::log_info!("Network driver initialized");
+                // MAC 주소 출력
+                if let Ok(mac) = simple_os::net::get_mac_address() {
+                    simple_os::log_info!("Network MAC address: {}", mac);
+                }
+            }
+            Err(e) => {
+                simple_os::log_warn!("Failed to initialize network driver: {:?}", e);
+                // 네트워크 드라이버 초기화 실패해도 커널은 계속 실행 가능
+            }
+        }
+    }
+    
     simple_os::log_info!("Kernel initialization complete");
     
-    // 13. Shell 시작
+    // 15. Shell 시작
     simple_os::log_info!("Starting shell...");
     let mut shell = simple_os::shell::Shell::new();
     shell.run();

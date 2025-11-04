@@ -9,7 +9,7 @@ use crate::interrupts::pic;
 use crate::{log_error, log_warn, log_debug, log_info};
 
 /// 전역 IDT
-static mut IDT: InterruptDescriptorTable = InterruptDescriptorTable::new();
+pub static mut IDT: InterruptDescriptorTable = InterruptDescriptorTable::new();
 
 /// IDT 초기화
 ///

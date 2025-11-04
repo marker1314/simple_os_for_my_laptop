@@ -8,4 +8,5 @@ pub mod keyboard;
 pub mod vga;
 pub mod ata;
 pub mod pci;
+pub mod rtl8139;
 

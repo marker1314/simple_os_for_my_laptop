@@ -18,6 +18,7 @@ const PCI_SUBCLASS: u8 = 0x0A;
 const PCI_PROG_IF: u8 = 0x09;
 const PCI_HEADER_TYPE: u8 = 0x0E;
 const PCI_BAR0: u8 = 0x10;
+const PCI_INTERRUPT_LINE: u8 = 0x3C;
 
 /// PCI 헤더 타입
 const PCI_HEADER_TYPE_DEVICE: u8 = 0x00;
@@ -54,6 +55,8 @@ pub struct PciDevice {
     pub header_type: u8,
     /// BAR0 (베이스 주소 레지스터 0)
     pub bar0: u32,
+    /// 인터럽트 라인 (IRQ 번호)
+    pub interrupt_line: u8,
 }
 
 impl PciDevice {
@@ -129,6 +132,10 @@ impl PciDevice {
         
         // BAR0 읽기
         self.bar0 = self.read_config_register(PCI_BAR0);
+        
+        // 인터럽트 라인 읽기
+        let interrupt_register = self.read_config_register(PCI_INTERRUPT_LINE);
+        self.interrupt_line = (interrupt_register & 0xFF) as u8;
     }
 }
 
@@ -159,6 +166,7 @@ pub unsafe fn scan_pci_bus(callback: PciScanCallback) {
                 prog_if: 0,
                 header_type: 0,
                 bar0: 0,
+                interrupt_line: 0,
             };
             
             if !pci_device.exists() {
@@ -187,6 +195,7 @@ pub unsafe fn scan_pci_bus(callback: PciScanCallback) {
                             prog_if: 0,
                             header_type: 0,
                             bar0: 0,
+                            interrupt_line: 0,
                         };
                         
                         if func_device.exists() {

@@ -11,18 +11,6 @@ pub struct MacAddress(pub [u8; 6]);
 impl MacAddress {
     /// 브로드캐스트 MAC 주소
     pub const BROADCAST: MacAddress = MacAddress([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
-    
-    /// MAC 주소를 문자열로 변환
-    pub fn to_string(&self) -> heapless::String<18> {
-        let mut s = heapless::String::new();
-        for (i, byte) in self.0.iter().enumerate() {
-            if i > 0 {
-                let _ = s.push_str(":");
-            }
-            let _ = write!(s, "{:02X}", byte);
-        }
-        s
-    }
 }
 
 impl core::fmt::Display for MacAddress {
@@ -131,6 +119,4 @@ pub trait EthernetDriver {
     /// 드라이버가 초기화되었는지 확인
     fn is_initialized(&self) -> bool;
 }
-
-use core::fmt::Write;
 
