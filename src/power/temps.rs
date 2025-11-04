@@ -1,7 +1,6 @@
-//! Intel RAPL MSR reading (best-effort)
+//! CPU temperature reading (Intel best-effort)
 
-const MSR_RAPL_POWER_UNIT: u32 = 0x606; // energy units in bits 8..12
-const MSR_PKG_ENERGY_STATUS: u32 = 0x611;
+const MSR_IA32_THERM_STATUS: u32 = 0x19C;
 
 #[inline]
 fn msr_supported() -> bool {
@@ -39,25 +38,15 @@ unsafe fn read_msr(msr: u32) -> u64 {
     ((high as u64) << 32) | (low as u64)
 }
 
-pub fn read_package_energy_status() -> Option<u32> {
+/// Read approximate package temperature in Celsius assuming TjMax=100C
+pub fn read_package_temperature_c() -> Option<u8> {
     if !msr_supported() { return None; }
     unsafe {
-        let val = read_msr(MSR_PKG_ENERGY_STATUS) as u32;
-        Some(val)
-    }
-}
-
-/// Read energy unit denominator (2^eu) where eu = bits 8..12 of MSR_RAPL_POWER_UNIT
-/// Returns microjoules per LSB approximately, as a fixed-point scaling factor (in nanojoules per LSB)
-pub fn read_energy_unit_nanojoules() -> Option<u64> {
-    if !msr_supported() { return None; }
-    unsafe {
-        let units = read_msr(MSR_RAPL_POWER_UNIT);
-        let eu = ((units >> 8) & 0x1F) as u32;
-        // Energy unit = 1 / 2^eu Joules per LSB
-        // Convert to nanojoules: 1e9 / 2^eu
-        let nj_per_lsb: u64 = 1_000_000_000u64 >> eu;
-        Some(nj_per_lsb)
+        let v = read_msr(MSR_IA32_THERM_STATUS);
+        if (v & (1 << 31)) == 0 { return None; } // reading invalid
+        let dts = ((v >> 16) & 0x7F) as u8; // delta to TjMax
+        let tjmax = 100u8; // conservative default
+        Some(tjmax.saturating_sub(dts))
     }
 }
 

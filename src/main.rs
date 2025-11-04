@@ -128,18 +128,18 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
     simple_os::syscall::init_syscall_handler();
     simple_os::log_info!("System call handler initialized");
     
-    // 12. ATA 드라이버 초기화
-    unsafe {
-        simple_os::drivers::ata::init();
-    }
-    simple_os::log_info!("ATA driver initialization attempted");
-    // 프로파일별 디스크 유휴 타임아웃 설정
-    match simple_os::config::profile::current_profile() {
-        simple_os::config::profile::Profile::PowerSaver => {
-            simple_os::drivers::ata::set_idle_timeout_ms(30000);
-            simple_os::log_info!("ATA idle timeout set to 30000ms (power_saver)");
+    // 12. ATA 드라이버 초기화 (파일시스템 기능 사용 시에만)
+    #[cfg(feature = "fs")]
+    {
+        unsafe { simple_os::drivers::ata::init(); }
+        simple_os::log_info!("ATA driver initialization attempted");
+        match simple_os::config::profile::current_profile() {
+            simple_os::config::profile::Profile::PowerSaver => {
+                simple_os::drivers::ata::set_idle_timeout_ms(30000);
+                simple_os::log_info!("ATA idle timeout set to 30000ms (power_saver)");
+            }
+            _ => {}
         }
-        _ => {}
     }
     
     // 13. 파일시스템 초기화 (ATA가 감지된 경우)
@@ -321,6 +321,7 @@ fn desktop_loop() -> ! {
             x86_64::instructions::hlt();
         }
         // 디스크 유휴 관리
+        #[cfg(feature = "fs")]
         simple_os::drivers::ata::maybe_enter_idle(current_time);
         // 네트워크 저전력 관리
         #[cfg(feature = "net")]

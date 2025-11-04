@@ -16,6 +16,7 @@ pub mod idle;
 pub mod device;
 pub mod stats;
 pub mod rapl;
+pub mod temps;
 
 pub use manager::PowerManager;
 pub use policy::{PowerPolicy, PowerMode};
@@ -47,6 +48,26 @@ pub unsafe fn init() -> Result<(), PowerError> {
 /// 초기화되지 않은 경우 None을 반환합니다.
 pub fn get_manager() -> Option<&'static Mutex<Option<PowerManager>>> {
     Some(&POWER_MANAGER)
+}
+
+/// Enter S3 sleep (best-effort stub)
+pub fn suspend_s3() -> Result<(), PowerError> {
+    let mut pm = POWER_MANAGER.lock();
+    if let Some(ref mut m) = *pm {
+        m.suspend_s3()
+    } else {
+        Err(PowerError::NotInitialized)
+    }
+}
+
+/// Resume from sleep (stub)
+pub fn resume() -> Result<(), PowerError> {
+    let mut pm = POWER_MANAGER.lock();
+    if let Some(ref mut m) = *pm {
+        m.resume()
+    } else {
+        Err(PowerError::NotInitialized)
+    }
 }
 
 /// 전력 관리 오류

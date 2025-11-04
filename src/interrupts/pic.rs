@@ -3,6 +3,7 @@
 //! 이 모듈은 PIC를 리매핑하여 하드웨어 인터럽트가 시스템 예외와 충돌하지 않도록 합니다.
 
 use x86_64::instructions::port::Port;
+use x86_64::instructions::interrupts;
 
 /// PIC 제어 포트
 const PIC1_COMMAND: u16 = 0x20;
@@ -67,22 +68,24 @@ pub unsafe fn init() {
 
 /// PIC에서 인터럽트 마스크 설정
 pub unsafe fn set_mask(irq: u8, enabled: bool) {
-    let mut port = if irq < 8 {
-        Port::new(PIC1_DATA)
-    } else {
-        Port::new(PIC2_DATA)
-    };
+    interrupts::without_interrupts(|| {
+        let mut port = if irq < 8 {
+            Port::new(PIC1_DATA)
+        } else {
+            Port::new(PIC2_DATA)
+        };
 
-    let mut current_mask = port.read() as u8;
-    let bit = 1 << (irq % 8);
+        let mut current_mask = port.read() as u8;
+        let bit = 1 << (irq % 8);
 
-    if enabled {
-        current_mask &= !bit; // 비트 클리어 = 인터럽트 활성화
-    } else {
-        current_mask |= bit; // 비트 설정 = 인터럽트 비활성화
-    }
+        if enabled {
+            current_mask &= !bit; // 비트 클리어 = 인터럽트 활성화
+        } else {
+            current_mask |= bit; // 비트 설정 = 인터럽트 비활성화
+        }
 
-    port.write(current_mask);
+        port.write(current_mask);
+    });
 }
 
 /// PIC 인터럽트 종료 신호 전송

@@ -194,7 +194,7 @@ pub fn newline() {
 macro_rules! vga_print {
     ($($arg:tt)*) => {
         use core::fmt::Write;
-        $crate::drivers::vga::WRITER.lock().write_fmt(format_args!($($arg)*)).unwrap();
+        let _ = $crate::drivers::vga::WRITER.lock().write_fmt(format_args!($($arg)*));
     };
 }
 

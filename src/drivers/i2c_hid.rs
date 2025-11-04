@@ -115,7 +115,10 @@ impl I2cHidDevice {
         self.descriptor = Some(self.read_hid_descriptor()?);
 
         // Descriptor 검증
-        let desc = self.descriptor.unwrap();
+        let desc = match self.descriptor {
+            Some(d) => d,
+            None => return Err(I2cHidError::InvalidDescriptor),
+        };
         if desc.length != 30 {
             return Err(I2cHidError::InvalidDescriptor);
         }

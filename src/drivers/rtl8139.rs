@@ -426,8 +426,14 @@ impl EthernetDriver for Rtl8139Driver {
             let desc_idx = self.allocate_tx_buffer()?;
             let desc = &mut self.tx_descriptors[desc_idx];
             
-            let virt_addr = desc.virt_addr.expect("TX buffer not allocated");
-            let frame = desc.frame.expect("TX frame not allocated");
+            let virt_addr = match desc.virt_addr {
+                Some(p) => p,
+                None => return Err(NetworkError::BufferFull),
+            };
+            let frame = match desc.frame {
+                Some(f) => f,
+                None => return Err(NetworkError::BufferFull),
+            };
             let phys_addr = frame.start_address();
             
             // 2. 패킷 데이터를 송신 버퍼에 복사

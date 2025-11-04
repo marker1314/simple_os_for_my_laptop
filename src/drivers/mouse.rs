@@ -204,9 +204,13 @@ pub fn handle_interrupt() {
             (800, 600)
         };
 
-        let mut state = MOUSE_STATE.lock();
-        if let Some(event) = state.process_byte(byte, screen_width, screen_height) {
-            MOUSE_EVENTS.lock().push(event);
+        // 인터럽트 컨텍스트: 잠금 경합 시 즉시 드롭하여 지연/데드락 방지
+        if let Some(mut state) = MOUSE_STATE.try_lock() {
+            if let Some(event) = state.process_byte(byte, screen_width, screen_height) {
+                if let Some(mut q) = MOUSE_EVENTS.try_lock() {
+                    q.push(event);
+                }
+            }
         }
     }
 }

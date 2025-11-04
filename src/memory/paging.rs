@@ -5,10 +5,13 @@
 //! 추가 매핑과 페이지 테이블 조작을 위한 유틸리티를 제공합니다.
 
 use x86_64::{
-    structures::paging::OffsetPageTable,
+    structures::paging::{Mapper, OffsetPageTable, Page, PageTableFlags, Size4KiB, mapper::MapToError},
     VirtAddr,
 };
 use bootloader_api::BootInfo;
+use spin::Mutex;
+
+use crate::memory::frame::BootInfoFrameAllocator;
 
 /// 부트로더가 설정한 페이지 테이블에 접근하기 위한 매퍼 생성
 ///
@@ -60,5 +63,39 @@ pub fn print_page_table_info() {
         level_4_table_frame.start_address(),
         flags
     );
+}
+
+// Cached physical memory offset for use outside boot paths (e.g., page fault handler)
+static PHYSICAL_MEMORY_OFFSET: Mutex<Option<VirtAddr>> = Mutex::new(None);
+
+/// Remember the physical memory offset for later mapping operations
+pub fn set_physical_memory_offset(offset: VirtAddr) {
+    let mut guard = PHYSICAL_MEMORY_OFFSET.lock();
+    *guard = Some(offset);
+}
+
+/// Map a zero-initialized 4KiB page at the given virtual address (page-aligned)
+///
+/// Safety: caller must ensure the address is valid to map and not already mapped.
+pub unsafe fn map_zero_page_at(addr: VirtAddr) -> Result<(), MapToError<Size4KiB>> {
+    let offset = {
+        let guard = PHYSICAL_MEMORY_OFFSET.lock();
+        guard.ok_or(MapToError::FrameAllocationFailed)?
+    };
+
+    let mut mapper = init_mapper(offset);
+    let mut frame_allocator = BootInfoFrameAllocator::new();
+
+    let page = Page::<Size4KiB>::containing_address(addr);
+    let frame = frame_allocator
+        .allocate_frame()
+        .ok_or(MapToError::FrameAllocationFailed)?;
+    let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
+    mapper.map_to(page, frame, flags, &mut frame_allocator)?.flush();
+
+    // Zero the freshly mapped page
+    let ptr = addr.as_mut_ptr::<u8>();
+    core::ptr::write_bytes(ptr, 0, Size4KiB::SIZE as usize);
+    Ok(())
 }
 

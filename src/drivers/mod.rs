@@ -6,6 +6,7 @@ pub mod serial;
 pub mod timer;
 pub mod keyboard;
 pub mod vga;
+#[cfg(feature = "fs")]
 pub mod ata;
 pub mod pci;
 pub mod rtl8139;

@@ -10,7 +10,7 @@ pub mod slab;
 
 pub use map::{init as init_memory_map, get as get_memory_map, MemoryMap, MemoryType, ParsedMemoryRegion};
 pub use frame::{init as init_frame_allocator, allocate_frame};
-pub use paging::{init_mapper, get_physical_memory_offset, print_page_table_info};
+pub use paging::{init_mapper, get_physical_memory_offset, print_page_table_info, set_physical_memory_offset};
 pub use heap::{init_heap, HEAP_START};
 pub use slab::SLAB;
 
@@ -43,6 +43,9 @@ pub unsafe fn init(boot_info: &'static BootInfo) -> Result<(), MapToError<Size4K
     crate::log_info!("Frame allocator initialized");
     
     // 3. 힙 할당자 초기화
+    // Also cache physical memory offset for later dynamic mappings
+    let phys_off = paging::get_physical_memory_offset(boot_info);
+    paging::set_physical_memory_offset(phys_off);
     heap::init_heap(boot_info)?;
     crate::log_info!("Heap allocator initialized at {:p}", HEAP_START as *const u8);
     

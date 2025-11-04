@@ -164,16 +164,41 @@ extern "x86-interrupt" fn page_fault_handler(
     use x86_64::registers::control::Cr2;
     
     let accessed_address = Cr2::read();
+    // Attempt best-effort recovery for non-present faults within heap range by
+    // mapping a zero-initialized page at the faulting address (page-aligned).
+    if !error_code.contains(PageFaultErrorCode::PRESENT) {
+        let addr_u64 = accessed_address.as_u64();
+        let (heap_start, heap_size) = crate::memory::heap::heap_bounds();
+        let heap_end = heap_start.saturating_add(heap_size);
+        // 제한: 힙의 최상위 미매핑 페이지에 대한 첫 접근만 자동 복구 (grow-on-demand)
+        let expected_page_base = (heap_end as u64).saturating_sub(0x1000);
+        let page_base = addr_u64 & !0xfffu64;
+        if page_base == expected_page_base {
+            let page_base_va = x86_64::VirtAddr::new(page_base);
+            unsafe {
+                match crate::memory::paging::map_zero_page_at(page_base_va) {
+                    Ok(()) => {
+                        crate::log_info!(
+                            "Handled heap grow-on-demand at {:#016x}",
+                            page_base
+                        );
+                        return;
+                    }
+                    Err(e) => {
+                        crate::log_error!("Page fault recovery failed: {:?}", e);
+                    }
+                }
+            }
+        }
+    }
+
+    // Unrecoverable fault: log and halt
     log_error!("Page Fault Exception");
     log_error!("Accessed Address: {:#016x}", accessed_address.as_u64());
     log_error!("Error Code: {:?}", error_code);
     log_error!("Stack Frame: {:#?}", stack_frame);
     crate::crash::record_exception(stack_frame.instruction_pointer.as_u64(), 0x0E);
-    
-    // TODO: 페이지 폴트 처리 구현
-    loop {
-        x86_64::instructions::hlt();
-    }
+    loop { x86_64::instructions::hlt(); }
 }
 
 /// 예외 핸들러: x87 Floating Point (0x10)
@@ -216,7 +241,7 @@ extern "x86-interrupt" fn mouse_interrupt_handler(_stack_frame: InterruptStackFr
     
     // PIC에 EOI 전송 (IRQ 12는 슬레이브 PIC)
     unsafe {
-        pic::send_eoi(12);
+        pic::end_of_interrupt(12);
     }
 }
 

@@ -152,5 +152,22 @@ impl PowerManager {
         
         Ok(())
     }
+
+    /// Suspend to RAM (S3) - stub implementation
+    pub fn suspend_s3(&mut self) -> Result<(), PowerError> {
+        if self.acpi_parser.is_none() {
+            return Err(PowerError::Unsupported);
+        }
+        crate::log_info!("Entering S3 suspend (stub): devices quiesced, CPU will halt");
+        // TODO: save device state, program ACPI sleep state, flush caches
+        Err(PowerError::Unsupported)
+    }
+
+    /// Resume from sleep - stub implementation
+    pub fn resume(&mut self) -> Result<(), PowerError> {
+        crate::log_info!("Resuming from sleep (stub)");
+        // TODO: restore device state and reinitialize timers/IRQs
+        Ok(())
+    }
 }
 

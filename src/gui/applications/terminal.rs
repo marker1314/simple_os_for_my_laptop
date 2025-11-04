@@ -105,9 +105,10 @@ impl Terminal {
 
             // 커서 위치의 문자를 반전 색상으로 표시
             if self.cursor_pos < self.input_buffer.len() {
-                let ch = self.input_buffer.chars().nth(self.cursor_pos).unwrap();
-                let ch_str = alloc::format!("{}", ch);
-                font::draw_str(cursor_x, input_line_y, &ch_str, Color::BLACK);
+                if let Some(ch) = self.input_buffer.chars().nth(self.cursor_pos) {
+                    let ch_str = alloc::format!("{}", ch);
+                    font::draw_str(cursor_x, input_line_y, &ch_str, Color::BLACK);
+                }
             }
         }
     }

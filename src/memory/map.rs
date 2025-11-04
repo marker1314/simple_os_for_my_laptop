@@ -4,6 +4,7 @@
 
 use bootloader_api::info::{MemoryRegion, MemoryRegionKind};
 use x86_64::PhysAddr;
+use spin::Mutex;
 
 /// 메모리 영역 타입
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,15 +100,19 @@ impl MemoryMap {
     }
 }
 
-/// 전역 메모리 맵 인스턴스
-static mut MEMORY_MAP: Option<MemoryMap> = None;
+/// 전역 메모리 맵 인스턴스 포인터 (안전한 저장)
+static MEMORY_MAP_PTR: Mutex<Option<&'static MemoryMap>> = Mutex::new(None);
 
 /// 메모리 맵 초기화
 ///
 /// # Safety
 /// `memory_regions`는 유효한 메모리 맵을 가리켜야 하며, 이 함수는 한 번만 호출되어야 합니다.
 pub unsafe fn init(memory_regions: &'static [MemoryRegion]) {
-    MEMORY_MAP = Some(MemoryMap::new(memory_regions));
+    let map = MemoryMap::new(memory_regions);
+    // 'static 수명으로 누수시켜 전역적으로 참조 가능하게 함 (부팅 기간 동안 유지)
+    let leaked: &'static MemoryMap = Box::leak(Box::new(map));
+    let mut guard = MEMORY_MAP_PTR.lock();
+    *guard = Some(leaked);
 }
 
 /// 메모리 맵 가져오기
@@ -115,6 +120,7 @@ pub unsafe fn init(memory_regions: &'static [MemoryRegion]) {
 /// # Safety
 /// `init`이 먼저 호출되어야 합니다.
 pub unsafe fn get() -> &'static MemoryMap {
-    MEMORY_MAP.as_ref().expect("Memory map not initialized")
+    let guard = MEMORY_MAP_PTR.lock();
+    guard.expect("Memory map not initialized")
 }
 

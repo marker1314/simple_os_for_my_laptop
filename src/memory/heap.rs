@@ -10,6 +10,7 @@ use x86_64::{
     VirtAddr,
 };
 use bootloader_api::BootInfo;
+use spin::Mutex;
 
 use crate::memory::paging::{get_physical_memory_offset, init_mapper};
 use crate::memory::frame::BootInfoFrameAllocator;
@@ -18,7 +19,7 @@ use crate::memory::frame::BootInfoFrameAllocator;
 pub const HEAP_START: usize = 0x_4444_4444_0000;
 const HEAP_INITIAL_SIZE: usize = 100 * 1024; // 100 KB
 const HEAP_MAX_SIZE: usize = 2 * 1024 * 1024; // 2 MB cap
-static mut HEAP_SIZE_BYTES: usize = HEAP_INITIAL_SIZE;
+static HEAP_SIZE_BYTES: Mutex<usize> = Mutex::new(HEAP_INITIAL_SIZE);
 
 /// 전역 힙 할당자
 #[global_allocator]
@@ -42,11 +43,17 @@ pub unsafe fn init_heap(
     // 시스템 메모리 상황에 따라 힙 크기를 동적으로 설정 (최대 2MB)
     let total_regions = boot_info.memory_regions.len();
     let dynamic_target = if total_regions > 0 { 512 * 1024 } else { HEAP_INITIAL_SIZE };
-    HEAP_SIZE_BYTES = core::cmp::min(HEAP_MAX_SIZE, core::cmp::max(HEAP_INITIAL_SIZE, dynamic_target));
+    {
+        let mut size_guard = HEAP_SIZE_BYTES.lock();
+        *size_guard = core::cmp::min(HEAP_MAX_SIZE, core::cmp::max(HEAP_INITIAL_SIZE, dynamic_target));
+    }
 
     // 힙 영역을 페이지로 변환
     let heap_start = VirtAddr::new(HEAP_START as u64);
-    let heap_end = heap_start + HEAP_SIZE_BYTES as u64 - 1u64;
+    let heap_end = {
+        let size_guard = HEAP_SIZE_BYTES.lock();
+        heap_start + (*size_guard as u64) - 1u64
+    };
     let heap_start_page = Page::containing_address(heap_start);
     let heap_end_page = Page::containing_address(heap_end);
 
@@ -63,7 +70,8 @@ pub unsafe fn init_heap(
 
     // 할당자 초기화
     unsafe {
-        ALLOCATOR.lock().init(HEAP_START as *mut u8, HEAP_SIZE_BYTES);
+        let size_guard = HEAP_SIZE_BYTES.lock();
+        ALLOCATOR.lock().init(HEAP_START as *mut u8, *size_guard);
     }
 
     Ok(())
@@ -75,5 +83,11 @@ pub unsafe fn init_heap(
 #[alloc_error_handler]
 fn alloc_error_handler(layout: core::alloc::Layout) -> ! {
     panic!("allocation error: {:?}", layout)
+}
+
+/// 현재 힙의 시작 주소와 크기를 반환 (바이트)
+pub fn heap_bounds() -> (usize, usize) {
+    let size_guard = HEAP_SIZE_BYTES.lock();
+    (HEAP_START, *size_guard)
 }
 

@@ -5,6 +5,7 @@
 use x86_64::PhysAddr;
 use x86_64::structures::paging::{FrameAllocator, PhysFrame, PageSize, Size4KiB};
 use spin::Mutex;
+use alloc::vec::Vec;
 
 use crate::memory::map::{get as get_memory_map, MemoryType};
 
@@ -17,6 +18,8 @@ pub struct BootInfoFrameAllocator {
     current_region_index: usize,
     /// 현재 영역 내의 다음 프레임 오프셋 (프레임 단위)
     current_frame_offset: u64,
+    /// 해제된 프레임을 재사용하기 위한 자유 리스트
+    free_list: Vec<PhysFrame<Size4KiB>>,
 }
 
 impl BootInfoFrameAllocator {
@@ -25,6 +28,7 @@ impl BootInfoFrameAllocator {
         Self {
             current_region_index: 0,
             current_frame_offset: 0,
+            free_list: Vec::new(),
         }
     }
 
@@ -64,10 +68,19 @@ impl BootInfoFrameAllocator {
             None
         }
     }
+
+    /// 해제된 프레임을 자유 리스트에 추가
+    pub fn deallocate(&mut self, frame: PhysFrame<Size4KiB>) {
+        self.free_list.push(frame);
+    }
 }
 
 unsafe impl FrameAllocator<Size4KiB> for BootInfoFrameAllocator {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
+        // 우선 자유 리스트에서 재사용
+        if let Some(frame) = self.free_list.pop() {
+            return Some(frame);
+        }
         self.find_next_frame()
     }
 }
@@ -85,6 +98,14 @@ pub fn init() {
 pub fn allocate_frame() -> Option<PhysFrame<Size4KiB>> {
     let mut allocator = FRAME_ALLOCATOR.lock();
     allocator.as_mut()?.allocate_frame()
+}
+
+/// 프레임 해제 (전역)
+pub fn deallocate_frame(frame: PhysFrame<Size4KiB>) {
+    let mut allocator = FRAME_ALLOCATOR.lock();
+    if let Some(ref mut alloc) = *allocator {
+        alloc.deallocate(frame);
+    }
 }
 
 /// 주소를 위로 정렬 (4KB 경계)
