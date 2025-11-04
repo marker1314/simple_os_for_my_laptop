@@ -2,6 +2,6 @@
 //!
 //! 이 모듈은 가상 파일시스템(VFS) 및 실제 파일시스템 구현을 담당합니다.
 
-// TODO: VFS 인터페이스 정의
-// TODO: FAT32 파일시스템 구현
+pub mod vfs;
+pub mod fat32;
 

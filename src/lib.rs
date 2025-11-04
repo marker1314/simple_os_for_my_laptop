@@ -42,7 +42,7 @@ pub mod interrupts;
 // pub mod sync;
 pub mod syscall;
 pub mod shell;
-// pub mod fs;
+pub mod fs;
 // pub mod net;
 
 pub mod logging;
