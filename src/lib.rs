@@ -4,13 +4,36 @@
 //! 각 커널 모듈은 여기서 export됩니다.
 
 #![no_std]
+#![feature(abi_x86_interrupt)]
 #![feature(custom_test_frameworks)]
+#![feature(alloc_error_handler)]
 #![test_runner(crate::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
+extern crate alloc;
+
+/// 패닉 핸들러
+///
+/// 커널 패닉이 발생했을 때 호출됩니다.
+/// 라이브러리와 바이너리 크레이트 모두에서 사용됩니다.
+#[cfg(not(test))]
+#[panic_handler]
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    // 시리얼 포트를 통한 패닉 메시지 출력
+    // serial_println!은 시리얼 포트가 초기화되지 않아도 안전하게 작동합니다
+    crate::serial_println!("\n=== KERNEL PANIC ===");
+    crate::serial_println!("{}", info);
+    crate::serial_println!("===================\n");
+    
+    loop {
+        // 패닉 발생 시 무한 루프
+        x86_64::instructions::hlt();
+    }
+}
+
 // 모듈 선언
 pub mod boot;
-// pub mod memory;
+pub mod memory;
 // pub mod scheduler;
 // pub mod power;
 pub mod drivers;

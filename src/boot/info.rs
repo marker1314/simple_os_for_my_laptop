@@ -2,7 +2,7 @@
 //!
 //! 이 모듈은 부트로더에서 전달된 정보를 파싱하고 저장합니다.
 
-use bootloader::BootInfo;
+use bootloader_api::BootInfo;
 
 /// 부트 정보 전역 변수
 ///
@@ -33,7 +33,7 @@ pub unsafe fn get() -> &'static BootInfo {
 pub fn memory_map_len() -> usize {
     unsafe {
         BOOT_INFO
-            .map(|info| info.memory_map.len())
+            .map(|info| info.memory_regions.len())
             .unwrap_or(0)
     }
 }

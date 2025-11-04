@@ -1,0 +1,12 @@
+[package]
+name = "create-bootimage"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "create-bootimage"
+path = "main.rs"
+
+[dependencies]
+bootloader = "0.11.12"
+

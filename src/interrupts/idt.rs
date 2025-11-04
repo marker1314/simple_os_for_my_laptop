@@ -24,7 +24,7 @@ pub unsafe fn init() {
     IDT.invalid_opcode.set_handler_fn(invalid_opcode_handler);
     IDT.device_not_available.set_handler_fn(device_not_available_handler);
     IDT.double_fault.set_handler_fn(double_fault_handler);
-    IDT.coprocessor_segment_overrun.set_handler_fn(coprocessor_segment_overrun_handler);
+    // IDT.coprocessor_segment_overrun.set_handler_fn(coprocessor_segment_overrun_handler);
     IDT.invalid_tss.set_handler_fn(invalid_tss_handler);
     IDT.segment_not_present.set_handler_fn(segment_not_present_handler);
     IDT.stack_segment_fault.set_handler_fn(stack_segment_fault_handler);
