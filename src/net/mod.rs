@@ -2,7 +2,9 @@
 //!
 //! 이 모듈은 네트워크 프로토콜 스택 및 드라이버를 담당합니다.
 
-// TODO: 이더넷 드라이버 구현
-// TODO: IP 프로토콜 구현
-// TODO: TCP/UDP 구현
+pub mod ethernet;
+pub mod driver;
+
+pub use ethernet::{MacAddress, PacketBuffer, NetworkError, EthernetDriver};
+pub use driver::{init as init_network, send_packet, receive_packet, get_mac_address};
 

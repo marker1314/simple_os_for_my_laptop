@@ -179,7 +179,8 @@ simple_os_for_my_laptop/
 │   │   ├── vga.rs         # VGA 디스플레이
 │   │   ├── timer.rs       # 타이머
 │   │   ├── serial.rs      # 시리얼 포트
-│   │   └── ata.rs         # ATA/SATA 저장장치 드라이버
+│   │   ├── ata.rs         # ATA/SATA 저장장치 드라이버
+│   │   └── pci.rs         # PCI 버스 드라이버
 │   ├── interrupts/        # 인터럽트 핸들러
 │   ├── logging.rs         # 로깅 시스템
 │   ├── sync/              # 동기화 프리미티브
@@ -197,6 +198,9 @@ simple_os_for_my_laptop/
 │   │   ├── vfs.rs         # 가상 파일시스템 (VFS) 인터페이스
 │   │   └── fat32.rs       # FAT32 파일시스템 구현
 │   └── net/               # 네트워크 스택
+│       ├── mod.rs         # 네트워크 모듈 통합
+│       ├── ethernet.rs    # 이더넷 드라이버 인터페이스
+│       └── driver.rs      # 네트워크 드라이버 관리
 ├── tests/                 # 통합 테스트
 ├── docs/                  # 추가 문서
 └── scripts/               # 빌드/실행 스크립트
@@ -290,6 +294,15 @@ simple_os_for_my_laptop/
 - [x] 전력 정책 관리 시스템 구현
 - [x] 전력 관리 시스템 커널 통합
 
+**11단계: PCI 드라이버 및 네트워크 모듈 구현 (완료)**
+- [x] PCI 버스 스캔 및 디바이스 발견 모듈 구현
+- [x] PCI 구성 공간 읽기/쓰기 기능 구현
+- [x] 네트워크 디바이스 검색 기능 구현
+- [x] 이더넷 드라이버 인터페이스 정의 (EthernetDriver trait)
+- [x] 네트워크 드라이버 관리자 구현
+- [x] MAC 주소 및 패킷 버퍼 구조 구현
+- [x] 네트워크 모듈 커널 통합
+
 ### 계획된 기능
 
 **중기 목표**
@@ -301,7 +314,9 @@ simple_os_for_my_laptop/
 - [x] 전력 관리 시스템 (ACPI 파싱 기반 구축) - 기본 구조 완료
 - [x] 동적 전력 스케일링 - 모듈 구현 완료
 - [x] 파일시스템 (FAT32) - 읽기/쓰기 기능 완료 (ATA 드라이버 구현 대기 중)
-- [ ] 네트워크 드라이버 및 스택
+- [x] PCI 드라이버 및 네트워크 모듈 기본 구조 - 인터페이스 및 관리자 구현 완료
+- [ ] 네트워크 드라이버 실제 구현 (RTL8139, e1000 등)
+- [ ] 네트워크 프로토콜 스택 (IP, TCP/UDP)
 - [ ] GUI 시스템
 - [ ] 멀티코어 지원
 
@@ -322,10 +337,9 @@ simple_os_for_my_laptop/
 - `linked_list_allocator` (0.10) - 힙 할당자 구현
 
 ### 향후 추가 예정
-- `acpi` - ACPI 테이블 파싱
-- `pci` - PCI 디바이스 스캔
+- `acpi` - ACPI 테이블 파싱 (현재 직접 구현 중)
 - `embedded-graphics` - GUI 프레임워크
-- `smoltcp` - 네트워크 스택
+- `smoltcp` - 네트워크 스택 (현재 기본 구조 구현 완료)
 
 ## 🤝 기여하기
 

@@ -7,4 +7,5 @@ pub mod timer;
 pub mod keyboard;
 pub mod vga;
 pub mod ata;
+pub mod pci;
 
