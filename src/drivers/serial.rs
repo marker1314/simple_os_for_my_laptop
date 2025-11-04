@@ -38,3 +38,8 @@ pub fn _print(args: core::fmt::Arguments) {
     SERIAL1.lock().write_fmt(args).expect("Printing to serial failed");
 }
 
+/// 단일 바이트 출력 (시스템 콜용)
+pub fn write_byte(byte: u8) {
+    SERIAL1.lock().send(byte);
+}
+

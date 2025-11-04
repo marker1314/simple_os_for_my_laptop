@@ -111,9 +111,12 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
     simple_os::scheduler::init(10);
     simple_os::log_info!("Scheduler initialized");
     
+    // 11. 시스템 콜 핸들러 초기화
+    simple_os::syscall::init_syscall_handler();
+    
     // TODO: 다음 단계 초기화
-    // 11. 전력 관리 초기화
-    // 12. Shell/GUI 시작
+    // 12. 전력 관리 초기화
+    // 13. Shell/GUI 시작
     
     simple_os::log_info!("Kernel initialization complete");
 }

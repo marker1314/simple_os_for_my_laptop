@@ -179,6 +179,16 @@ pub fn init() {
     crate::log_info!("VGA text mode driver initialized");
 }
 
+/// 단일 문자 출력 (시스템 콜용)
+pub fn write_char(c: char) {
+    WRITER.lock().write_byte(c as u8);
+}
+
+/// 새 줄 출력 (시스템 콜용)
+pub fn newline() {
+    WRITER.lock().write_byte(b'\n');
+}
+
 /// VGA 출력 매크로
 #[macro_export]
 macro_rules! vga_print {

@@ -47,6 +47,16 @@ pub unsafe fn init() {
     IDT.load();
 }
 
+/// 시스템 콜 핸들러 등록
+///
+/// # Arguments
+/// * `interrupt_num` - 인터럽트 번호
+/// * `handler` - 핸들러 함수
+pub unsafe fn register_syscall_handler(interrupt_num: u8, handler: extern "x86-interrupt" fn(InterruptStackFrame)) {
+    IDT[interrupt_num as usize].set_handler_fn(handler);
+    log_info!("Registered syscall handler for interrupt 0x{:02x}", interrupt_num);
+}
+
 /// 예외 핸들러: Divide Error (0x00)
 extern "x86-interrupt" fn divide_error_handler(stack_frame: InterruptStackFrame) {
     log_error!("Divide Error Exception");

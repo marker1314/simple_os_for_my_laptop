@@ -7,6 +7,7 @@
 #![feature(abi_x86_interrupt)]
 #![feature(custom_test_frameworks)]
 #![feature(alloc_error_handler)]
+#![feature(asm_const)]
 #![test_runner(crate::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
@@ -39,7 +40,7 @@ pub mod scheduler;
 pub mod drivers;
 pub mod interrupts;
 // pub mod sync;
-// pub mod syscall;
+pub mod syscall;
 // pub mod fs;
 // pub mod net;
 
