@@ -113,11 +113,16 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
     
     // 11. 시스템 콜 핸들러 초기화
     simple_os::syscall::init_syscall_handler();
+    simple_os::log_info!("System call handler initialized");
     
     // TODO: 다음 단계 초기화
     // 12. 전력 관리 초기화
-    // 13. Shell/GUI 시작
     
     simple_os::log_info!("Kernel initialization complete");
+    
+    // 13. Shell 시작
+    simple_os::log_info!("Starting shell...");
+    let mut shell = simple_os::shell::Shell::new();
+    shell.run();
 }
 

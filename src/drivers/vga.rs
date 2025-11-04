@@ -89,7 +89,7 @@ impl Writer {
                 let col = self.column_position;
 
                 let color_code = self.color_code;
-                Volatile::write(&mut self.buffer.chars[row][col], ScreenChar {
+                self.buffer.chars[row][col].write(ScreenChar {
                     ascii_character: byte,
                     color_code,
                 });
@@ -115,8 +115,8 @@ impl Writer {
         // 모든 행을 한 줄씩 위로 이동
         for row in 1..BUFFER_HEIGHT {
             for col in 0..BUFFER_WIDTH {
-                let character = Volatile::read(&self.buffer.chars[row][col]);
-                Volatile::write(&mut self.buffer.chars[row - 1][col], character);
+                let character = self.buffer.chars[row][col].read();
+                self.buffer.chars[row - 1][col].write(character);
             }
         }
         // 마지막 줄을 공백으로 채움
@@ -131,7 +131,7 @@ impl Writer {
             color_code: self.color_code,
         };
         for col in 0..BUFFER_WIDTH {
-            Volatile::write(&mut self.buffer.chars[row][col], blank);
+            self.buffer.chars[row][col].write(blank);
         }
     }
 
@@ -167,7 +167,7 @@ impl core::fmt::Write for Writer {
 /// 전역 Writer 인스턴스
 /// 
 /// 정적 초기화를 위해 const 함수 사용
-static WRITER: Mutex<Writer> = Mutex::new(Writer {
+pub static WRITER: Mutex<Writer> = Mutex::new(Writer {
     column_position: 0,
     color_code: ColorCode((Color::LightGray as u8) | ((Color::Black as u8) << 4)),
     buffer: unsafe { &mut *(VGA_BUFFER_ADDRESS as *mut Buffer) },

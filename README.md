@@ -185,6 +185,9 @@ simple_os_for_my_laptop/
 │   │   ├── handler.rs     # 시스템 콜 핸들러
 │   │   ├── dispatcher.rs  # 시스템 콜 디스패처
 │   │   └── implementations.rs # 시스템 콜 구현
+│   ├── shell/             # Shell 인터페이스
+│   │   ├── mod.rs         # Shell 메인 로직
+│   │   └── command.rs     # 명령어 처리
 │   ├── fs/                # 파일시스템 인터페이스
 │   └── net/               # 네트워크 스택
 ├── tests/                 # 통합 테스트
@@ -254,15 +257,23 @@ simple_os_for_my_laptop/
 - [x] 시스템 콜 에러 처리 메커니즘
 - [x] 시스템 콜 핸들러 초기화 및 통합
 
+**8단계: 기본 Shell 구현 (완료)**
+- [x] Shell 구조체 및 메인 루프 구현
+- [x] 키보드 입력 처리 (Enter, Backspace, Tab 지원)
+- [x] 명령어 파싱 및 실행 시스템
+- [x] 기본 명령어 구현 (help, clear, echo, uptime, exit)
+- [x] VGA 텍스트 모드 출력 통합
+- [x] Shell 초기화 및 커널 통합
+
 **다음 단계 (진행 예정)**
-- [ ] 기본 Shell 구현
+- [ ] 파일시스템 지원 (FAT32)
 
 ### 계획된 기능
 
 **중기 목표**
 - [x] 스케줄러 구현
 - [x] 시스템 콜 인터페이스
-- [ ] 기본 Shell 구현
+- [x] 기본 Shell 구현
 
 **장기 목표**
 - [ ] 전력 관리 시스템 (ACPI 완전 파싱)
