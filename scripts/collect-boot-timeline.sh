@@ -45,3 +45,4 @@ else
     echo "stage,timestamp_ms,relative_ms" > "$OUTPUT_FILE"
 fi
 
+

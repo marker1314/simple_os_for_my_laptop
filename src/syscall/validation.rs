@@ -120,3 +120,4 @@ pub fn validate_string(ptr: u64, max_len: usize) -> Result<(), SyscallError> {
     Ok(())
 }
 
+

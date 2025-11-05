@@ -271,3 +271,4 @@ Phase 16에서 구현한 멀티코어 지원은 Simple OS가 현대 하드웨어
 **다음 단계**: Phase 17 - Enhanced Filesystem Features
 
 
+

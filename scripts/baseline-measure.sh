@@ -145,3 +145,4 @@ echo "  - 전체 로그: $LOG_FILE"
 echo "  - 크래시 덤프: $CRASH_DUMP"
 echo "  - 요약: $SUMMARY"
 
+

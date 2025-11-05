@@ -323,3 +323,4 @@ Phase 17에서 구현한 향상된 파일시스템 기능들은 Simple OS의 실
 **다음 단계**: Phase 18 - Application Launcher and Desktop Environment
 
 
+

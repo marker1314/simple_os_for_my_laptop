@@ -92,3 +92,4 @@ wait $QEMU_PID 2>/dev/null || true
 echo "Test passed successfully!" | tee -a "$LOG_FILE"
 exit 0
 
+
