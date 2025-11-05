@@ -147,22 +147,24 @@ impl SwapManager {
         }
         
         // 디스크에 쓰기
-        let device = self.swap_device.ok_or(SwapError::NotInitialized)?;
         let block = self.swap_start_block + slot as u64;
         
-        // ATA 디바이스에 쓰기 (페이지는 8개 섹터 = 4KB)
-        // BlockDevice는 섹터 단위이므로 8개 섹터 필요
-        let mut sector_data = [0u8; 512];
-        for sector_offset in 0..8 {
-            let data_offset = sector_offset * 512;
-            if data_offset + 512 <= data_to_swap.len() {
-                sector_data.copy_from_slice(&data_to_swap[data_offset..data_offset + 512]);
-                
-                // TODO: 실제 디스크 쓰기 구현
-                // unsafe { device.write_block(block + sector_offset as u64, &sector_data)?; }
-                crate::log_debug!("Swap out: page {:#016x} -> slot {} sector {} (write not yet implemented)", 
-                                page.start_address().as_u64(), slot, sector_offset);
+        // ATA Primary Master에 직접 쓰기 (섹터 8개 = 4KB)
+        if let Some(ata_mutex) = crate::drivers::ata::get_primary_master() {
+            let mut guard = ata_mutex.lock();
+            let dev = guard.as_mut().ok_or(SwapError::NotInitialized)?;
+            for sector_offset in 0..8 {
+                let data_offset = sector_offset * 512;
+                if data_offset + 512 <= data_to_swap.len() {
+                    let sector_slice = &data_to_swap[data_offset..data_offset + 512];
+                    // write_block requires &mut [u8]; adapt to &[u8]
+                    // Safe: slice length is exactly 512
+                    let _ = dev.write_block(block + sector_offset as u64, sector_slice)
+                        .map_err(|_| SwapError::IoError)?;
+                }
             }
+        } else {
+            return Err(SwapError::NotInitialized);
         }
         
         // 스왑 엔트리 저장
@@ -202,21 +204,23 @@ impl SwapManager {
         let entry = self.swap_map.get(&addr).ok_or(SwapError::PageNotSwapped)?;
         
         // 디스크에서 읽기
-        let device = self.swap_device.ok_or(SwapError::NotInitialized)?;
         let block = self.swap_start_block + entry.slot as u64;
         
-        // ATA 디바이스에서 읽기 (페이지는 8개 섹터 = 4KB)
+        // ATA Primary Master에서 읽기 (섹터 8개 = 4KB)
         let mut page_data = [0u8; Size4KiB::SIZE as usize];
-        let mut sector_data = [0u8; 512];
-        
-        for sector_offset in 0..8 {
-            let data_offset = sector_offset * 512;
-            if data_offset + 512 <= page_data.len() {
-                // TODO: 실제 디스크 읽기 구현
-                // unsafe { device.read_block(block + sector_offset as u64, &mut sector_data)?; }
-                sector_data.fill(0); // 임시로 0으로 채움
-                page_data[data_offset..data_offset + 512].copy_from_slice(&sector_data);
+        if let Some(ata_mutex) = crate::drivers::ata::get_primary_master() {
+            let mut guard = ata_mutex.lock();
+            let dev = guard.as_mut().ok_or(SwapError::NotInitialized)?;
+            for sector_offset in 0..8 {
+                let data_offset = sector_offset * 512;
+                if data_offset + 512 <= page_data.len() {
+                    let sector_slice = &mut page_data[data_offset..data_offset + 512];
+                    let _ = dev.read_block(block + sector_offset as u64, sector_slice)
+                        .map_err(|_| SwapError::IoError)?;
+                }
             }
+        } else {
+            return Err(SwapError::NotInitialized);
         }
         
         let now = crate::drivers::timer::get_milliseconds();

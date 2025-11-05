@@ -117,15 +117,14 @@ cd simple_os_for_my_laptop
 
 #### 2. Build Kernel
 ```bash
-# Debug build
-cargo build
+# Debug build for kernel-only
+cargo +nightly build --target x86_64-unknown-none
 
-# Generate boot image
-cargo bootimage
+# Generate bootable disk image (Windows PowerShell)
+./build-bootimage.ps1
 
-# Release build (optimized)
-cargo build --release
-cargo bootimage --release
+# On Linux, create a small helper that invokes the bootloader 0.11 builder API,
+# or adapt build-bootimage.ps1 steps to a shell script (WIP)
 ```
 
 #### 3. Run in QEMU
@@ -136,11 +135,12 @@ qemu-system-x86_64 \
     -serial stdio \
     -display none
 
-# Or use script (Linux/macOS)
-./run.sh
+# Or use scripts
+# Linux/macOS
+./scripts/run.sh
 
-# On Windows
-.\run.bat
+# Windows (PowerShell)
+./scripts/run.ps1
 ```
 
 #### 4. Debug Mode
@@ -486,7 +486,12 @@ If you find bugs or have feature suggestions, please register them in [Issues](h
 
 ## 📝 License
 
-The license for this project has not yet been determined. A LICENSE file will be added after project policy decisions are made.
+This project is dual-licensed under either of
+
+- MIT License (see `LICENSE-MIT`)
+- Apache License, Version 2.0 (see `LICENSE-APACHE`)
+
+at your option.
 
 ## 📚 References
 

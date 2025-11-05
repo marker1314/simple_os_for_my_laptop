@@ -150,6 +150,14 @@ pub fn create_ethernet_frame(
 ///
 /// 수신된 이더넷 프레임을 처리하고 상위 프로토콜로 전달합니다.
 pub fn handle_ethernet_frame(packet: &PacketBuffer) -> Result<(), NetworkError> {
+    // Optional firewall check
+    #[cfg(feature = "net")]
+    {
+        if let Err(_) = crate::net::firewall::filter_ingress(packet) {
+            crate::log_debug!("Firewall: ingress drop");
+            return Ok(());
+        }
+    }
     let header = match EthernetHeader::from_packet(packet) {
         Some(h) => h,
         None => {

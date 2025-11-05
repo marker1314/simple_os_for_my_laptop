@@ -10,6 +10,7 @@ use crate::drivers::usb::error::UsbError;
 use crate::drivers::usb::host_controller::{UsbHostController, UsbHostControllerType};
 use crate::drivers::usb::request::UsbControlRequest;
 use core::ptr::{read_volatile, write_volatile};
+use x86_64::PhysAddr;
 
 /// MMIO 레지스터 오프셋
 const EHCI_CAPLENGTH: usize = 0x00;
@@ -261,23 +262,177 @@ impl EhciController {
     /// 실제 EHCI 제어 요청은 Queue Head (QH)와 Transfer Descriptor (TD)를 통해 전송됩니다.
     pub unsafe fn send_control_request(
         &self,
-        _device_address: u8,
-        _request: &UsbControlRequest,
-        _buffer: &mut [u8],
+        device_address: u8,
+        request: &UsbControlRequest,
+        buffer: &mut [u8],
     ) -> Result<usize, UsbError> {
         if !self.initialized {
             return Err(UsbError::NotInitialized);
         }
         
-        // TODO: Queue Head와 Transfer Descriptor를 통한 실제 제어 요청 전송 구현
+        // Minimal QH/qTD layout for a single control transfer on EP0.
+        // 1) Allocate one page for QH and qTD chain
+        let frame = crate::memory::allocate_frame().ok_or(UsbError::DeviceError)?;
+        let phys = frame.start_address();
+        let phys_off = crate::memory::paging::get_physical_memory_offset(crate::boot::get_boot_info());
+        let virt = (phys_off + phys.as_u64()).as_mut_ptr::<u8>();
+        core::ptr::write_bytes(virt, 0, 4096);
         
-        crate::log_warn!("EHCI control request not yet fully implemented");
-        Err(UsbError::NotImplemented)
+        // Offsets within the page
+        let qh_ptr = virt as *mut EhciQh;
+        let qtd_setup_ptr = virt.add(256) as *mut EhciQtd;
+        let qtd_data_ptr = virt.add(320) as *mut EhciQtd;
+        let qtd_status_ptr = virt.add(384) as *mut EhciQtd;
+        let setup_buf_ptr = virt.add(448);
+        let data_buf_ptr = virt.add(512);
+        
+        // Write setup packet (8 bytes)
+        core::ptr::copy_nonoverlapping(request as *const _ as *const u8, setup_buf_ptr, core::mem::size_of::<UsbControlRequest>());
+        
+        // Fill qTDs
+        let mut setup_qtd = EhciQtd::new();
+        setup_qtd.set_pid_setup();
+        setup_qtd.set_total_bytes(8);
+        setup_qtd.set_active(true);
+        setup_qtd.set_buffer_ptr(phys.as_u64() + 448);
+        setup_qtd.next_qtd_ptr = (phys.as_u64() + 320) as u32; // to DATA or STATUS
+        core::ptr::write_volatile(qtd_setup_ptr, setup_qtd);
+        
+        let mut has_data = false;
+        let mut data_len = 0usize;
+        if buffer.len() > 0 && request.length > 0 {
+            has_data = true;
+            data_len = core::cmp::min(buffer.len(), request.length as usize);
+            // Copy buffer for IN transfers into data buf as target; for OUT, as source
+            if (request.request_type & 0x80) == 0 {
+                // Host to device (OUT)
+                core::ptr::copy_nonoverlapping(buffer.as_ptr(), data_buf_ptr, data_len);
+            }
+            let mut data_qtd = EhciQtd::new();
+            if (request.request_type & 0x80) != 0 { data_qtd.set_pid_in(); } else { data_qtd.set_pid_out(); }
+            data_qtd.set_total_bytes(data_len as u32);
+            data_qtd.set_active(true);
+            data_qtd.set_buffer_ptr(phys.as_u64() + 512);
+            data_qtd.next_qtd_ptr = (phys.as_u64() + 384) as u32; // to STATUS
+            core::ptr::write_volatile(qtd_data_ptr, data_qtd);
+        }
+        
+        let mut status_qtd = EhciQtd::new();
+        if has_data {
+            // opposite direction of DATA stage
+            if (request.request_type & 0x80) != 0 { status_qtd.set_pid_out(); } else { status_qtd.set_pid_in(); }
+        } else {
+            // opposite of SETUP is IN status
+            status_qtd.set_pid_in();
+        }
+        status_qtd.set_total_bytes(0);
+        status_qtd.set_active(true);
+        status_qtd.next_qtd_ptr = 1; // Terminate
+        core::ptr::write_volatile(qtd_status_ptr, status_qtd);
+        
+        // QH setup
+        let mut qh = EhciQh::new();
+        qh.set_ep0(device_address, 0, 64);
+        qh.next_qh_ptr = 1; // Terminate
+        qh.overlay_current_qtd = 0;
+        qh.overlay_next_qtd = (phys.as_u64() + 256) as u32; // to SETUP
+        core::ptr::write_volatile(qh_ptr, qh);
+        
+        // 2) Program ASYNCLISTADDR and run controller async schedule
+        self.write_op(EHCI_ASYNCLISTADDR, phys.as_u64() as u32);
+        let mut usbcmd = self.read_op(EHCI_USBCMD);
+        // Enable async schedule
+        usbcmd |= 1 << 5; // Async Enable
+        usbcmd |= EHCI_CMD_RUN;
+        self.write_op(EHCI_USBCMD, usbcmd);
+        
+        // 3) Poll completion on STATUS qTD active bit
+        let mut timeout = 1000000u32;
+        loop {
+            let st = core::ptr::read_volatile(qtd_status_ptr);
+            if !st.is_active() { break; }
+            if timeout == 0 { return Err(UsbError::DeviceError); }
+            timeout -= 1;
+            core::hint::spin_loop();
+        }
+        
+        // If IN data stage, copy back data
+        if has_data && (request.request_type & 0x80) != 0 {
+            core::ptr::copy_nonoverlapping(data_buf_ptr, buffer.as_mut_ptr(), data_len);
+        }
+        
+        Ok(if has_data { data_len } else { 0 })
     }
     
     /// 포트 수 가져오기
     pub fn port_count(&self) -> u8 {
         self.port_count
+    }
+}
+#[repr(C, packed)]
+struct EhciQh {
+    horiz_link_ptr: u32,
+    ep_char: u32,
+    ep_cap: u32,
+    overlay_next_qtd: u32,
+    overlay_alt_next_qtd: u32,
+    overlay_token: u32,
+    overlay_buffer_ptrs: [u32; 5],
+    _reserved: [u32; 4],
+    next_qh_ptr: u32,
+    overlay_current_qtd: u32,
+}
+
+impl EhciQh {
+    fn new() -> Self {
+        Self {
+            horiz_link_ptr: 1,
+            ep_char: 0,
+            ep_cap: 0,
+            overlay_next_qtd: 1,
+            overlay_alt_next_qtd: 1,
+            overlay_token: 0,
+            overlay_buffer_ptrs: [0; 5],
+            _reserved: [0; 4],
+            next_qh_ptr: 1,
+            overlay_current_qtd: 0,
+        }
+    }
+    fn set_ep0(&mut self, addr: u8, _endpoint: u8, max_packet: u16) {
+        // ep_char layout: device addr bits0-6, ep num bits8-11, ep speed bits12-13, dtc bit14, h bit15, max packet bits16-26
+        let mut v = 0u32;
+        v |= (addr as u32) & 0x7F;
+        v |= (0u32 & 0xF) << 8; // ep0
+        // Assume high-speed (binary 10) for simplicity; real impl would read port speed
+        v |= (2u32) << 12;
+        v |= 1u32 << 14; // DTC
+        v |= 1u32 << 15; // H (head of reclamation)
+        v |= ((max_packet as u32) & 0x7FF) << 16;
+        self.ep_char = v;
+        // ep_cap: S-mask/C-mask, etc. Leave zero for async control.
+    }
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+struct EhciQtd {
+    next_qtd_ptr: u32,
+    alt_next_qtd_ptr: u32,
+    token: u32,
+    buffer_ptrs: [u32; 5],
+}
+
+impl EhciQtd {
+    fn new() -> Self { Self { next_qtd_ptr: 1, alt_next_qtd_ptr: 1, token: 0, buffer_ptrs: [0; 5] } }
+    fn set_active(&mut self, a: bool) { if a { self.token |= 1 << 7; } else { self.token &= !(1 << 7); } }
+    fn is_active(&self) -> bool { (self.token & (1 << 7)) != 0 }
+    fn set_pid_setup(&mut self) { self.token &= !(3 << 8); self.token |= 2 << 8; }
+    fn set_pid_in(&mut self) { self.token &= !(3 << 8); self.token |= 1 << 8; }
+    fn set_pid_out(&mut self) { self.token &= !(3 << 8); self.token |= 0 << 8; }
+    fn set_total_bytes(&mut self, n: u32) { self.token &= !(0x7FFF << 16); self.token |= (n & 0x7FFF) << 16; }
+    fn set_buffer_ptr(&mut self, addr: u64) {
+        self.buffer_ptrs[0] = (addr & 0xFFFF_FFFF) as u32;
+        // For simplicity we ignore crossing page boundaries in this minimal impl.
     }
 }
 

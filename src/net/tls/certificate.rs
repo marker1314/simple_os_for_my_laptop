@@ -196,6 +196,58 @@ impl TlsCertificate {
             not_after: None,
         }
     }
+
+    /// 간단한 RSA 서명 검증 (CA 인증서 1장 사용)
+    /// SHA-256 또는 SHA-1을 지원합니다.
+    pub fn verify_with_ca(&self, ca_der: &[u8]) -> Result<(), TlsCertificateError> {
+        // 1) CA 공개키 추출
+        let ca_key = match crate::net::tls::rsa::RsaPublicKey::from_certificate(ca_der) {
+            Ok(k) => k,
+            Err(_) => return Err(TlsCertificateError::ParseError),
+        };
+
+        // 2) TBSCertificate 추출
+        let mut parser = Asn1Parser::new(&self.data);
+        let cert_seq = parser.read_sequence().map_err(|_| TlsCertificateError::ParseError)?;
+        let mut cert_parser = Asn1Parser::new(cert_seq);
+        let tbs_cert = cert_parser.read_sequence().map_err(|_| TlsCertificateError::ParseError)?;
+
+        // 3) 서명 알고리즘 간단 판별
+        let algo = self.signature_algorithm.as_deref().unwrap_or("sha256");
+        let digest = match algo {
+            "sha1" | "SHA1" => {
+                use crate::net::tls::sha::Sha1Context;
+                Sha1Context::hash(tbs_cert).to_vec()
+            }
+            _ => {
+                use crate::net::tls::sha256::Sha256Context;
+                Sha256Context::hash(tbs_cert).to_vec()
+            }
+        };
+
+        // 4) 서명 값(BIT STRING) 추출: Certificate ::= SEQUENCE { tbs, sigAlg, signature BIT STRING }
+        // cert_parser는 tbs 다음에 위치, 다음 시퀀스(sigAlg)를 건너뛰고 BIT STRING 읽기
+        let _sig_alg = cert_parser.read_sequence().map_err(|_| TlsCertificateError::ParseError)?;
+        // BIT STRING 태그(0x03) 확인 및 읽기
+        if cert_parser.offset >= cert_seq.len() || cert_seq[cert_parser.offset] != 0x03 { return Err(TlsCertificateError::ParseError); }
+        cert_parser.offset += 1;
+        let sig_len = cert_parser.read_length().map_err(|_| TlsCertificateError::ParseError)?;
+        if cert_parser.offset + sig_len > cert_seq.len() { return Err(TlsCertificateError::ParseError); }
+        // 첫 바이트는 unused bits
+        let unused_bits = cert_seq[cert_parser.offset];
+        let sig_bytes = &cert_seq[cert_parser.offset + 1 .. cert_parser.offset + sig_len];
+        let _ = unused_bits; // unused for now
+
+        // 5) RSA PKCS#1 v1.5 검증: 서명 복호화 후 DigestInfo 확인을 단순화하여 해시 접미 비교
+        let decrypted = crate::net::tls::rsa::rsa_encrypt_pkcs1_v15(&ca_key, sig_bytes)
+            .map_err(|_| TlsCertificateError::SignatureInvalid)?;
+
+        // PKCS#1 v1.5 DigestInfo를 엄밀히 파싱하는 대신, 끝의 해시가 일치하는지 확인
+        if decrypted.len() < digest.len() { return Err(TlsCertificateError::SignatureInvalid); }
+        let tail = &decrypted[decrypted.len() - digest.len() ..];
+        if tail != &digest[..] { return Err(TlsCertificateError::SignatureInvalid); }
+        Ok(())
+    }
     
     /// 인증서 검증
     /// 

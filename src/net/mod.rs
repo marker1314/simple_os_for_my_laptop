@@ -12,6 +12,8 @@ pub mod tcp;
 pub mod ethernet_frame;
 #[cfg(feature = "net")]
 pub mod tls;
+#[cfg(feature = "net")]
+pub mod firewall;
 
 pub use ethernet::{MacAddress, PacketBuffer, NetworkError, EthernetDriver};
 pub use driver::{init as init_network, send_packet, receive_packet, get_mac_address, low_power_tick};

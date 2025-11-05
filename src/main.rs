@@ -65,6 +65,9 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
     simple_os::boot::mark_stage(simple_os::boot::BootStage::BootInfoInit);
     simple_os::log_info!("Boot info initialized");
     simple_os::log_info!("Memory map entries: {}", simple_os::boot::memory_map_len());
+    // HW probe summary (CPU and PCI)
+    simple_os::boot::log_cpu_info();
+    simple_os::boot::log_pci_summary();
     // 이전 크래시 보고 (심볼화된 덤프)
     if let Some(dump) = simple_os::crash::take() {
         simple_os::crash::print_crash_dump(&dump);
@@ -166,6 +169,18 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
     // TODO: FAT32와 ATA를 완전히 통합한 후 활성화
     #[cfg(feature = "fs")]
     {
+        // NVMe 초기화(옵션)
+        #[cfg(feature = "nvme")]
+        unsafe {
+            match simple_os::drivers::nvme::init() {
+                Ok(()) => {
+                    simple_os::log_info!("NVMe controller initialized (skeleton)");
+                }
+                Err(_e) => {
+                    simple_os::log_info!("No NVMe controller or init failed (skipping)");
+                }
+            }
+        }
         simple_os::boot::mark_stage(simple_os::boot::BootStage::FilesystemReady);
         simple_os::log_info!("Filesystem module ready");
     }
@@ -177,7 +192,8 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
                 simple_os::boot::mark_stage(simple_os::boot::BootStage::PowerInit);
                 simple_os::log_info!("Power management initialized");
                 
-                // RAPL 전력 측정 초기화
+                // RAPL 전력 측정 초기화 (Intel only)
+                #[cfg(feature = "intel_rapl")]
                 simple_os::power::rapl::init_rapl_measurement();
                 
                 // CPU 온도 모니터링 초기화
@@ -469,6 +485,12 @@ fn desktop_loop() -> ! {
         
         // 전력 모니터링 대시보드 업데이트 (1초마다)
         simple_os::power::monitor::update_monitor(current_time);
+
+        // USB HID 폴링 (임시, Interrupt IN 구현 전 보완)
+        #[cfg(feature = "usb")]
+        {
+            simple_os::drivers::usb::core::poll_hid();
+        }
     }
 }
 

@@ -8,6 +8,7 @@ pub mod path;
 pub mod cache;
 pub mod journal;
 pub mod fsck;
+pub mod simple_journal_fs;
 
 use crate::fs::vfs::{FileSystem, FsResult};
 use crate::fs::fat32::Fat32FileSystem;

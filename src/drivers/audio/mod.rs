@@ -24,6 +24,7 @@ pub use hda::HdaController;
 pub use pcm::{PcmStream, PcmFormat, PcmError};
 
 use crate::drivers::pci::PciDevice;
+use spin::Mutex;
 
 /// 오디오 드라이버 초기화
 ///
@@ -52,7 +53,8 @@ pub unsafe fn init() -> Result<(), AudioError> {
                 match driver_retry(|| unsafe { controller.init() }, retry_config) {
                     Ok(()) => {
                         crate::log_info!("HDA controller initialized successfully");
-                        // 전역 컨트롤러 저장 (향후 구현)
+                        // 전역 컨트롤러 저장
+                        set_global_controller(controller);
                         Ok(())
                     }
                     Err(e) => {
@@ -120,5 +122,48 @@ impl core::fmt::Display for AudioError {
             AudioError::IoError => write!(f, "Audio I/O error"),
         }
     }
+}
+
+// 전역 HDA 컨트롤러 보관
+static HDA_GLOBAL: Mutex<Option<HdaController>> = Mutex::new(None);
+
+fn set_global_controller(ctrl: HdaController) {
+    let mut g = HDA_GLOBAL.lock();
+    *g = Some(ctrl);
+}
+
+/// 간단한 테스트 톤(무음)을 출력 버퍼에 채우고 재생을 시작
+pub fn start_test_pcm() -> Result<(), AudioError> {
+    use crate::drivers::audio::pcm::PcmFormat;
+    let mut g = HDA_GLOBAL.lock();
+    let ctrl = g.as_mut().ok_or(AudioError::NotInitialized)?;
+    unsafe {
+        let fmt = PcmFormat::new(48000, 2, 16, true);
+        let buffer_bytes = (fmt.bytes_per_second() / 10).max(4096);
+        let frame = crate::memory::allocate_frame().ok_or(AudioError::InitFailed)?;
+        let phys = frame.start_address();
+        let phys_offset = crate::memory::paging::get_physical_memory_offset(crate::boot::get_boot_info());
+        let ptr = (phys_offset + phys.as_u64()).as_mut_ptr::<u8>();
+        // 간단한 사인파 톤 생성 (440Hz)
+        let freq = 440.0f32;
+        let sample_rate = fmt.sample_rate as f32;
+        let samples = buffer_bytes / (fmt.bytes_per_sample() * fmt.channels as usize);
+        for i in 0..samples {
+            let t = i as f32 / sample_rate;
+            let s = (core::f32::consts::TAU * freq * t).sin();
+            let val = (s * i16::MAX as f32) as i16;
+            // 스테레오 16-bit 리틀엔디언
+            let base = i * 4;
+            let b0 = (val & 0xFF) as u8;
+            let b1 = ((val >> 8) & 0xFF) as u8;
+            core::ptr::write(ptr.add(base), b0);
+            core::ptr::write(ptr.add(base + 1), b1);
+            core::ptr::write(ptr.add(base + 2), b0);
+            core::ptr::write(ptr.add(base + 3), b1);
+        }
+        ctrl.setup_pcm_output(0, &fmt, phys, buffer_bytes)?;
+        ctrl.start_pcm_output(0)?;
+    }
+    Ok(())
 }
 

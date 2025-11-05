@@ -513,6 +513,18 @@ impl XhciController {
     pub fn port_count(&self) -> u8 {
         self.port_count
     }
+
+    /// Interrupt IN 전송으로 데이터 수신 (스켈레톤)
+    /// 현재 디바이스/엔드포인트 컨텍스트 및 트랜스퍼 링 설정이 미구현이므로
+    /// 안전하게 NotImplemented를 반환합니다.
+    pub unsafe fn recv_interrupt_in(
+        &mut self,
+        _endpoint_address: u8,
+        _data_buffer: *mut u8,
+        _data_length: u16,
+    ) -> Result<(), UsbError> {
+        Err(UsbError::NotImplemented)
+    }
 }
 
 impl UsbHostController for XhciController {

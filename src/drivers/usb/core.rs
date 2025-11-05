@@ -14,6 +14,8 @@ pub struct UsbManager {
     host_controllers: Vec<GenericUsbHostController>,
     /// 연결된 USB 디바이스 목록
     devices: Vec<UsbDevice>,
+    /// 감지된 HID 장치 (주소와 프로퍼티)
+    hid_devices: Vec<(u8, crate::drivers::usb::hid::HidDevice)>,
     /// 다음 디바이스 주소 (1-127)
     next_address: u8,
     /// 초기화 여부
@@ -26,6 +28,7 @@ impl UsbManager {
         Self {
             host_controllers: Vec::new(),
             devices: Vec::new(),
+            hid_devices: Vec::new(),
             next_address: 1,
             initialized: false,
         }
@@ -144,7 +147,7 @@ impl UsbManager {
     /// # Safety
     /// 호스트 컨트롤러가 초기화되어 있어야 합니다.
     unsafe fn enumerate_device_on_port(&mut self, controller: &mut GenericUsbHostController, port: u8) -> Result<UsbDevice, UsbError> {
-        use crate::drivers::usb::descriptor::DeviceDescriptor;
+        use crate::drivers::usb::descriptor::{DeviceDescriptor, ConfigurationDescriptor, DescriptorType, InterfaceDescriptor, EndpointDescriptor};
         use crate::drivers::usb::request::UsbControlRequest;
         
         // 1. 포트 리셋 (디바이스 초기화)
@@ -214,8 +217,51 @@ impl UsbManager {
             controller.send_control_request(&verify_request, descriptor_buf.as_mut_ptr(), 18)?;
         }
         
-        // 5. 구성 디스크립터 읽기
-        // TODO: Get Configuration Descriptor (구현 필요)
+        // 5. 구성 디스크립터 읽기 (먼저 헤더 9바이트로 total_length 파악)
+        let get_cfg_hdr = UsbControlRequest::new_get_descriptor(
+            DescriptorType::Configuration,
+            0,
+            0,
+            core::mem::size_of::<ConfigurationDescriptor>() as u16,
+        );
+        let mut cfg_hdr_buf = [0u8; 9];
+        unsafe {
+            controller.send_control_request(&get_cfg_hdr, cfg_hdr_buf.as_mut_ptr(), cfg_hdr_buf.len() as u16)?;
+        }
+        let cfg_hdr = unsafe { core::ptr::read(cfg_hdr_buf.as_ptr() as *const ConfigurationDescriptor) };
+        let total_len = cfg_hdr.total_length as usize;
+        // 전체 구성 디스크립터 블록 읽기
+        let mut cfg_buf_vec: alloc::vec::Vec<u8> = alloc::vec![0u8; total_len];
+        let get_cfg_full = UsbControlRequest::new_get_descriptor(DescriptorType::Configuration, 0, 0, total_len as u16);
+        unsafe {
+            controller.send_control_request(&get_cfg_full, cfg_buf_vec.as_mut_ptr(), total_len as u16)?;
+        }
+        // 간단 파서: Interface/Endpoint 디스크립터들만 추출
+        let mut idx = 0usize;
+        let mut interfaces: alloc::vec::Vec<(InterfaceDescriptor, alloc::vec::Vec<EndpointDescriptor>)> = alloc::vec::Vec::new();
+        while idx + 2 <= total_len {
+            let len = cfg_buf_vec[idx] as usize;
+            if len == 0 || idx + len > total_len { break; }
+            let dtype = cfg_buf_vec[idx + 1];
+            match dtype {
+                0x04 => { // Interface
+                    if len >= core::mem::size_of::<InterfaceDescriptor>() { 
+                        let intf = unsafe { core::ptr::read(cfg_buf_vec[idx..].as_ptr() as *const InterfaceDescriptor) };
+                        interfaces.push((intf, alloc::vec::Vec::new()));
+                    }
+                }
+                0x05 => { // Endpoint
+                    if len >= core::mem::size_of::<EndpointDescriptor>() {
+                        if let Some((_, ref mut eps)) = interfaces.last_mut() {
+                            let ep = unsafe { core::ptr::read(cfg_buf_vec[idx..].as_ptr() as *const EndpointDescriptor) };
+                            eps.push(ep);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            idx += len;
+        }
         
         // 6. 구성 설정 (기본 구성 1 사용)
         let set_config_request = UsbControlRequest::new_set_configuration(1);
@@ -227,6 +273,19 @@ impl UsbManager {
         let mut device = UsbDevice::new(new_address);
         device.set_device_descriptor(device_descriptor);
         device.set_state(crate::drivers::usb::device::UsbDeviceState::Configured);
+
+        // HID 인터페이스 감지 (키보드/마우스) 및 저장
+        for (intf, eps) in interfaces.iter() {
+            if let Some(hid) = crate::drivers::usb::hid::HidDevice::from_interface(intf, eps) {
+                crate::log_info!(
+                    "Detected USB HID {:?} (INT IN ep=0x{:02X}, interval={}ms)",
+                    hid.kind,
+                    hid.interrupt_in.map(|e| e.address).unwrap_or(0),
+                    hid.interrupt_in.map(|e| e.interval_ms).unwrap_or(0)
+                );
+                self.hid_devices.push((new_address, hid));
+            }
+        }
         
         crate::log_info!("USB device enumerated: address={}, class={:?}", 
                         new_address,
@@ -250,7 +309,67 @@ impl UsbManager {
 static MANAGER: Mutex<UsbManager> = Mutex::new(UsbManager {
     host_controllers: Vec::new(),
     devices: Vec::new(),
+    hid_devices: Vec::new(),
     next_address: 1,
     initialized: false,
 });
+
+/// Poll HID devices for input and feed into GUI mouse when available
+pub fn poll_hid() {
+    use crate::drivers::usb::hid::HidDeviceKind;
+    use crate::drivers::usb::hid::build_get_report_request;
+    use crate::drivers::usb::hid::report::MouseReport;
+    let mut mgr = MANAGER.lock();
+    if !mgr.initialized || mgr.host_controllers.is_empty() { return; }
+    // 단일 컨트롤러 가정
+    let controller: *mut GenericUsbHostController = &mut mgr.host_controllers[0];
+    for (_addr, hid) in mgr.hid_devices.iter() {
+        match hid.kind {
+            HidDeviceKind::Mouse => unsafe {
+                let mut buf = [0u8; core::mem::size_of::<MouseReport>()];
+                // 우선 Interrupt IN 시도
+                if (*controller).recv_interrupt_in(hid.interrupt_in.map(|e| e.address).unwrap_or(0), buf.as_mut_ptr(), buf.len() as u16).is_err() {
+                    let req = build_get_report_request(hid.interface_number, 0x01, 0, buf.len() as u16);
+                    let _ = (*controller).send_control_request(&req, buf.as_mut_ptr(), buf.len() as u16);
+                }
+                let rep = MouseReport { buttons: buf[0], dx: buf[1] as i8, dy: buf[2] as i8, wheel: buf[3] as i8 };
+                // PS/2 드라이버 좌표계와 일치하도록 Y축 반전 적용
+                let (mut x, mut y) = crate::drivers::mouse::get_position();
+                x = x.saturating_add(rep.dx as isize);
+                y = y.saturating_sub(rep.dy as isize);
+                // 화면 경계 보정
+                let (sw, sh) = if let Some(info) = crate::drivers::framebuffer::info() {
+                    (info.width as isize, info.height as isize)
+                } else { (800, 600) };
+                if x < 0 { x = 0; } else if x >= sw { x = sw - 1; }
+                if y < 0 { y = 0; } else if y >= sh { y = sh - 1; }
+
+                // 이동 이벤트
+                crate::drivers::mouse::inject_event(crate::drivers::mouse::MouseEvent::Move(x, y));
+
+                // 버튼 이벤트 (현재 버튼 상태와 비교)
+                let (mut left, mut right, mut middle) = crate::drivers::mouse::get_buttons();
+                let new_left = (rep.buttons & 0x01) != 0;
+                let new_right = (rep.buttons & 0x02) != 0;
+                let new_middle = (rep.buttons & 0x04) != 0;
+                if new_left != left {
+                    let ev = if new_left { crate::drivers::mouse::MouseEvent::LeftButtonDown(x,y) } else { crate::drivers::mouse::MouseEvent::LeftButtonUp(x,y) };
+                    crate::drivers::mouse::inject_event(ev);
+                    left = new_left;
+                }
+                if new_right != right {
+                    let ev = if new_right { crate::drivers::mouse::MouseEvent::RightButtonDown(x,y) } else { crate::drivers::mouse::MouseEvent::RightButtonUp(x,y) };
+                    crate::drivers::mouse::inject_event(ev);
+                    right = new_right;
+                }
+                if new_middle != middle {
+                    let ev = if new_middle { crate::drivers::mouse::MouseEvent::MiddleButtonDown(x,y) } else { crate::drivers::mouse::MouseEvent::MiddleButtonUp(x,y) };
+                    crate::drivers::mouse::inject_event(ev);
+                    middle = new_middle;
+                }
+            },
+            _ => {}
+        }
+    }
+}
 

@@ -220,6 +220,11 @@ pub fn get_event() -> Option<MouseEvent> {
     MOUSE_EVENTS.lock().pop()
 }
 
+/// 외부 소스(USB HID 등)에서 마우스 이벤트 주입
+pub fn inject_event(event: MouseEvent) {
+    MOUSE_EVENTS.lock().push(event);
+}
+
 /// 현재 마우스 위치 가져오기
 pub fn get_position() -> (isize, isize) {
     let state = MOUSE_STATE.lock();

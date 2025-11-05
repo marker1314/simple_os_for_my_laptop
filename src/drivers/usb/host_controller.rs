@@ -193,6 +193,27 @@ impl GenericUsbHostController {
             }
         }
     }
+
+    /// Interrupt IN 전송으로 보고서를 수신 (엔드포인트 주소 기준)
+    ///
+    /// 현재는 xHCI에서만 점진적으로 구현 예정이며, 미구현 시 NotImplemented를 반환합니다.
+    pub unsafe fn recv_interrupt_in(
+        &mut self,
+        endpoint_address: u8,
+        data_buffer: *mut u8,
+        data_length: u16,
+    ) -> Result<(), UsbError> {
+        match self {
+            GenericUsbHostController::Xhci(ctrl) => ctrl.recv_interrupt_in(endpoint_address, data_buffer, data_length),
+            GenericUsbHostController::Ehci(_) => Err(UsbError::NotImplemented),
+            GenericUsbHostController::Generic { initialized, .. } => {
+                if !*initialized {
+                    return Err(UsbError::NotInitialized);
+                }
+                Err(UsbError::NotImplemented)
+            }
+        }
+    }
 }
 
 impl UsbHostController for GenericUsbHostController {

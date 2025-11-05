@@ -214,6 +214,12 @@ pub struct HdaController {
     corb: Option<Corb>,
     /// RIRB
     rirb: Option<Rirb>,
+    /// Output BDL 물리 주소
+    output_bdl: Option<PhysAddr>,
+    /// Output PCM 버퍼 물리 주소
+    output_buffer: Option<PhysAddr>,
+    /// Output PCM 버퍼 크기 (바이트)
+    output_buffer_size: Option<usize>,
 }
 
 impl HdaController {
@@ -239,6 +245,7 @@ impl HdaController {
             rirb: None,
             output_bdl: None,
             output_buffer: None,
+            output_buffer_size: None,
         })
     }
     
@@ -625,10 +632,28 @@ impl HdaController {
         
         self.output_bdl = Some(bdl_phys);
         self.output_buffer = Some(buffer);
+        self.output_buffer_size = Some(buffer_size);
         
         crate::log_info!("HDA: PCM output setup: stream={}, rate={}Hz, bits={}, channels={}",
                         stream_id, format.sample_rate, format.sample_size, format.channels);
         
+        Ok(())
+    }
+
+    /// PCM 출력 버퍼에 데이터 쓰기 및 재생 위치 업데이트
+    pub unsafe fn write_pcm_data(&mut self, stream_id: u8, offset: usize, data: &[u8]) -> Result<(), AudioError> {
+        if !self.initialized { return Err(AudioError::InitFailed); }
+        let buf_phys = self.output_buffer.ok_or(AudioError::NotInitialized)?;
+        let buf_size = self.output_buffer_size.ok_or(AudioError::NotInitialized)?;
+        if offset >= buf_size { return Err(AudioError::BufferTooSmall); }
+        let write_len = core::cmp::min(data.len(), buf_size - offset);
+        let phys_offset = get_physical_memory_offset(crate::boot::get_boot_info());
+        let dst_ptr = (phys_offset + buf_phys.as_u64() + offset as u64).as_mut_ptr::<u8>();
+        core::ptr::copy_nonoverlapping(data.as_ptr(), dst_ptr, write_len);
+        // 재생 위치 레지스터 업데이트 (LPIB)
+        let sd_offset = HDA_SD_BASE + (stream_id as usize * HDA_SD_OFFSET);
+        // LPIB는 마지막 유효 인덱스 위치를 바이트 단위로 쓸 수 있는 구현이 있는 제품도 있으나, 보수적으로 바이트 위치 기록
+        self.write_u32(sd_offset + HDA_SDLPIB, (offset + write_len) as u32)?;
         Ok(())
     }
     

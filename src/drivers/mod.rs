@@ -20,4 +20,6 @@ pub mod touchpad;
 pub mod usb;
 #[cfg(feature = "audio")]
 pub mod audio;
+#[cfg(feature = "nvme")]
+pub mod nvme;
 

@@ -2,7 +2,13 @@
 """
 8x8 비트맵 폰트 생성기
 ASCII 문자 0-255를 위한 기본 폰트 데이터를 생성합니다.
+사용법:
+  python3 tools/generate_font.py [--overwrite]
 """
+
+import os
+import sys
+
 
 def generate_basic_font():
     """기본 8x8 폰트 데이터 생성 (256 문자 x 8 바이트 = 2048 바이트)"""
@@ -35,6 +41,30 @@ def generate_basic_font():
         0b00000000,
     ]
     
+    # 0 (0x30)
+    font_data[0x30 * 8:0x30 * 8 + 8] = [
+        0b00111100,
+        0b01100110,
+        0b01101110,
+        0b01110110,
+        0b01100110,
+        0b01100110,
+        0b00111100,
+        0b00000000,
+    ]
+    
+    # 1 (0x31)
+    font_data[0x31 * 8:0x31 * 8 + 8] = [
+        0b00011000,
+        0b00111000,
+        0b00011000,
+        0b00011000,
+        0b00011000,
+        0b00011000,
+        0b01111110,
+        0b00000000,
+    ]
+
     # A (0x41)
     font_data[0x41 * 8:0x41 * 8 + 8] = [
         0b00111100,
@@ -167,54 +197,43 @@ def generate_basic_font():
         0b00000000,
     ]
     
-    # 0 (0x30)
-    font_data[0x30 * 8:0x30 * 8 + 8] = [
-        0b00111100,
-        0b01100110,
-        0b01101110,
-        0b01110110,
-        0b01100110,
-        0b01100110,
-        0b00111100,
-        0b00000000,
-    ]
-    
-    # 1 (0x31)
-    font_data[0x31 * 8:0x31 * 8 + 8] = [
-        0b00011000,
-        0b00111000,
-        0b00011000,
-        0b00011000,
-        0b00011000,
-        0b00011000,
-        0b01111110,
-        0b00000000,
-    ]
-    
-    # 나머지는 기본 패턴으로 채우기
+    # 나머지는 기본 패턴으로 채우기 대신, 빈 글리프로 설정하여 박스 표시를 줄임
     for i in range(256):
         # 이미 정의된 문자는 건너뜀
         if any(font_data[i * 8:i * 8 + 8]):
             continue
-        # 간단한 박스 패턴
+        # 빈 글리프 (가독성을 해치지 않도록 박스 패턴 대신 공백)
         font_data[i * 8:i * 8 + 8] = [
-            0b01111110,
-            0b01000010,
-            0b01000010,
-            0b01000010,
-            0b01000010,
-            0b01000010,
-            0b01111110,
+            0b00000000,
+            0b00000000,
+            0b00000000,
+            0b00000000,
+            0b00000000,
+            0b00000000,
+            0b00000000,
             0b00000000,
         ]
     
     return bytes(font_data)
 
+
+def ensure_assets_dir():
+    os.makedirs("assets", exist_ok=True)
+
+
 if __name__ == "__main__":
+    overwrite = "--overwrite" in sys.argv
+    ensure_assets_dir()
+    output_path = os.path.join("assets", "font8x8_basic.bin")
+
+    if os.path.exists(output_path) and not overwrite:
+        print(f"Skip generating: {output_path} already exists (use --overwrite to replace)")
+        sys.exit(0)
+
     font_data = generate_basic_font()
-    with open("assets/font8x8_basic.bin", "wb") as f:
+    with open(output_path, "wb") as f:
         f.write(font_data)
-    print(f"Generated font8x8_basic.bin ({len(font_data)} bytes)")
+    print(f"Generated {output_path} ({len(font_data)} bytes)")
 
 
 

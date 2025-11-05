@@ -30,8 +30,18 @@ smp = []
 usb = []
 audio = []
 
+# Storage / NIC / Security feature gates
+nvme = []
+net_r8168 = []
+tls_strict = []
+
+# Power feature gates
+power_saver = []
+intel_rapl = []
+
 # Default enable common subsystems; audio/usb are opt-in for footprint/power
-default = ["net", "fs", "gui", "touchpad", "smp"]
+# Enable tls_strict by default; nvme and r8168 are opt-in until drivers land
+default = ["net", "fs", "gui", "touchpad", "smp", "tls_strict"]
 
 [profile.dev]
 panic = "abort"

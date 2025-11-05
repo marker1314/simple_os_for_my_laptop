@@ -60,6 +60,14 @@ pub fn set_enabled(enabled: bool) {
     WATCHDOG_ENABLED.store(enabled, Ordering::Release);
 }
 
+/// Enable watchdog with a custom timeout (seconds)
+pub fn enable_with_timeout(seconds: u64) {
+    LAST_HEARTBEAT.store(crate::drivers::timer::get_milliseconds(), Ordering::Release);
+    WATCHDOG_ENABLED.store(true, Ordering::Release);
+    // Note: static timeout constant not changed; this is a placeholder for future dynamic timeout
+    crate::log_info!("Watchdog enabled (requested timeout: {}s)", seconds);
+}
+
 /// 메모리 할당 추적 (메모리 leak 감지)
 static MEMORY_ALLOCATED: AtomicU64 = AtomicU64::new(0);
 static MEMORY_FREED: AtomicU64 = AtomicU64::new(0);

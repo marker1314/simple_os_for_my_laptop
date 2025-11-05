@@ -4,6 +4,8 @@
 
 use crate::drivers::pci;
 use crate::drivers::rtl8139::{Rtl8139Driver, is_rtl8139};
+#[cfg(feature = "net_r8168")]
+use crate::drivers::rtl8168::{Rtl8168Driver, is_rtl8168};
 use crate::net::ethernet::{EthernetDriver, NetworkError, MacAddress, PacketBuffer};
 use spin::Mutex;
 use alloc::boxed::Box;
@@ -13,6 +15,7 @@ use alloc::boxed::Box;
 /// 네트워크 드라이버를 관리하고 패킷을 라우팅합니다.
 enum ActiveDriver {
     Rtl8139(Rtl8139Driver),
+    #[cfg(feature = "net_r8168")] Rtl8168(Rtl8168Driver),
 }
 
 pub struct NetworkDriverManager {
@@ -75,6 +78,17 @@ impl NetworkDriverManager {
                            pci_device.interrupt_line, interrupt_num);
             
             Ok(())
+        } else if cfg!(feature = "net_r8168") && is_rtl8168(&pci_device) {
+            crate::log_info!("Initializing RTL8168 driver (IRQ: {})", pci_device.interrupt_line);
+            let mut driver = Rtl8168Driver::new(pci_device);
+            driver.init(&pci_device)?;
+            self.driver = Some(ActiveDriver::Rtl8168(driver));
+            self.initialized = true;
+            self.irq = Some(pci_device.interrupt_line);
+            let interrupt_num = crate::interrupts::pic::PIC1_OFFSET + pci_device.interrupt_line;
+            crate::interrupts::idt::IDT[interrupt_num as usize].set_handler_fn(network_interrupt_handler);
+            unsafe { crate::interrupts::pic::set_mask(pci_device.interrupt_line, true); }
+            Ok(())
         } else {
             crate::log_warn!("Unsupported network device: Vendor=0x{:04X}, Device=0x{:04X}",
                            pci_device.vendor_id, pci_device.device_id);
@@ -86,7 +100,8 @@ impl NetworkDriverManager {
     pub fn send_packet(&mut self, packet: &PacketBuffer) -> Result<(), NetworkError> {
         match self.driver {
             Some(ActiveDriver::Rtl8139(ref mut d)) => d.send_packet(packet),
-            None => Err(NetworkError::NotInitialized),
+            #[cfg(feature = "net_r8168")] Some(ActiveDriver::Rtl8168(ref mut d)) => d.send_packet(packet),
+            _ => Err(NetworkError::NotInitialized),
         }
     }
     
@@ -94,7 +109,8 @@ impl NetworkDriverManager {
     pub fn receive_packet(&mut self) -> Option<PacketBuffer> {
         match self.driver {
             Some(ActiveDriver::Rtl8139(ref mut d)) => d.receive_packet(),
-            None => None,
+            #[cfg(feature = "net_r8168")] Some(ActiveDriver::Rtl8168(ref mut d)) => d.receive_packet(),
+            _ => None,
         }
     }
     
@@ -102,7 +118,8 @@ impl NetworkDriverManager {
     pub fn get_mac_address(&self) -> Result<MacAddress, NetworkError> {
         match self.driver {
             Some(ActiveDriver::Rtl8139(ref d)) => d.get_mac_address(),
-            None => Err(NetworkError::NotInitialized),
+            #[cfg(feature = "net_r8168")] Some(ActiveDriver::Rtl8168(ref d)) => d.get_mac_address(),
+            _ => Err(NetworkError::NotInitialized),
         }
     }
 
@@ -112,7 +129,10 @@ impl NetworkDriverManager {
             Some(ActiveDriver::Rtl8139(ref mut d)) => {
                 crate::drivers::rtl8139::maybe_enter_low_power(now_ms, d);
             }
-            None => {}
+            #[cfg(feature = "net_r8168")] Some(ActiveDriver::Rtl8168(_)) => {
+                // TODO: implement RTL8168 low-power
+            }
+            _ => {}
         }
     }
     

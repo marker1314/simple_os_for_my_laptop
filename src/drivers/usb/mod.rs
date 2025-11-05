@@ -28,6 +28,7 @@ pub mod request;
 pub mod xhci;
 pub mod xhci_trb;
 pub mod ehci;
+pub mod hid;
 
 pub use host_controller::{UsbHostController, UsbHostControllerType};
 pub use error::UsbError;
