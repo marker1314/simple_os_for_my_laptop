@@ -210,3 +210,4 @@ pub unsafe fn set_io_apic_redirect(irq: u8, vector: u8, dest_apic_id: u8) {
     write_io_apic_reg(redirect_reg + 1, high);
 }
 
+

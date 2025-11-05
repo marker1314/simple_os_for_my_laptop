@@ -44,8 +44,64 @@ impl Compositor {
         }
     }
 
-    /// 모든 윈도우 렌더링
+    /// 모든 윈도우 렌더링 (이벤트 기반)
+    /// NEEDS_REDRAW가 true일 때만 렌더링 (busy loop 방지)
+    /// Occluded/minimized 윈도우는 full repaint 스킵
     pub fn render_all(&self) {
+        // Redraw가 필요할 때만 렌더링 (이벤트 기반)
+        if NEEDS_REDRAW.load(Ordering::Acquire) {
+            // Occlusion 계산: 각 윈도우가 다른 윈도우에 가려졌는지 확인
+            let mut occluded_windows = vec![false; self.windows.len()];
+            
+            // Z-order 역순으로 occlusion 계산 (위에 있는 윈도우가 아래를 가림)
+            for i in (0..self.windows.len()).rev() {
+                if self.windows[i].is_minimized || !self.windows[i].is_visible {
+                    occluded_windows[i] = true;
+                    continue;
+                }
+                
+                // 이 윈도우보다 위에 있는 윈도우가 이 윈도우를 가리는지 확인
+                for j in (i+1..self.windows.len()).rev() {
+                    if self.windows[j].is_minimized || !self.windows[j].is_visible {
+                        continue;
+                    }
+                    
+                    // 간단한 overlap 체크
+                    let w1 = &self.windows[i];
+                    let w2 = &self.windows[j];
+                    if !(w2.x + w2.width <= w1.x || w1.x + w1.width <= w2.x ||
+                         w2.y + w2.height <= w1.y || w1.y + w1.height <= w2.y) {
+                        // Overlap 발견 - i번 윈도우가 가려짐
+                        occluded_windows[i] = true;
+                        break;
+                    }
+                }
+            }
+            
+            // Occlusion 상태 업데이트 및 렌더링
+            for (i, window) in self.windows.iter_mut().enumerate() {
+                // Occlusion 상태 업데이트
+                window.set_occluded(occluded_windows[i]);
+                
+                if !window.is_visible || window.is_minimized || occluded_windows[i] {
+                    continue; // 렌더링 스킵
+                }
+                
+                // 각 윈도우가 needs_redraw 플래그를 가지고 있으면 그것도 확인
+                if !window.needs_redraw && !NEEDS_REDRAW.load(Ordering::Acquire) {
+                    continue; // 이 윈도우는 redraw 불필요
+                }
+                
+                window.render();
+                window.set_needs_redraw(false); // 렌더링 완료
+            }
+            
+            NEEDS_REDRAW.store(false, Ordering::Release);
+        }
+    }
+    
+    /// 강제로 모든 윈도우 렌더링 (NEEDS_REDRAW 체크 없이)
+    pub fn force_render_all(&self) {
         for window in &self.windows {
             window.render();
         }

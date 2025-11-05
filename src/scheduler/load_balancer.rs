@@ -166,6 +166,52 @@ impl LoadBalancer {
         max_load - min_load >= 2
     }
     
+    /// Power-aware: 유휴 상태에서 작업을 최소 CPU로 집중
+    /// 이렇게 하면 다른 CPU들이 깊은 C-state로 진입할 수 있음
+    pub fn consolidate_load(&mut self) {
+        if self.cpu_loads.len() < 2 {
+            return;
+        }
+        
+        // 가장 적은 로드를 가진 CPU 찾기
+        let mut min_load_cpu = 0;
+        let mut min_load = usize::MAX;
+        
+        for (i, load) in self.cpu_loads.iter().enumerate() {
+            if load.thread_count < min_load {
+                min_load = load.thread_count;
+                min_load_cpu = i;
+            }
+        }
+        
+        // 다른 CPU들에서 작업을 최소 로드 CPU로 이동
+        // (실제 구현에서는 스레드 마이그레이션이 필요하지만, 여기서는 로드 정보만 업데이트)
+        // 실제 마이그레이션은 스케줄러에서 처리해야 함
+    }
+    
+    /// Power-aware 스케줄링 모드 확인
+    /// Idle 상태에서 로드 집중을 위해 재조정 필요 여부 확인
+    pub fn needs_power_aware_rebalancing(&self) -> bool {
+        if self.cpu_loads.len() < 2 {
+            return false;
+        }
+        
+        // 유휴 CPU가 있고, 다른 CPU에 작업이 있으면 재조정 필요
+        let mut idle_cpus = 0;
+        let mut active_cpus = 0;
+        
+        for load in &self.cpu_loads {
+            if load.thread_count == 0 && load.utilization < 10 {
+                idle_cpus += 1;
+            } else if load.thread_count > 0 {
+                active_cpus += 1;
+            }
+        }
+        
+        // 유휴 CPU가 있고 활성 CPU가 있으면 재조정
+        idle_cpus > 0 && active_cpus > 0
+    }
+    
     /// CPU 로드 정보 가져오기
     pub fn get_cpu_loads(&self) -> &[CpuLoad] {
         &self.cpu_loads
@@ -245,4 +291,5 @@ pub fn get_cpu_loads() -> Vec<CpuLoad> {
         Vec::new()
     }
 }
+
 

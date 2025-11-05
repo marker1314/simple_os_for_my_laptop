@@ -36,6 +36,17 @@ unsafe fn write_msr(msr: u32, value: u64) {
     );
 }
 
+/// CPU 스케일링 Governor 타입
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScalingGovernor {
+    /// On-demand: CPU 사용률에 따라 동적 조정
+    Ondemand,
+    /// Power-save: 최소 주파수 유지
+    Powersave,
+    /// Performance: 최대 주파수 유지
+    Performance,
+}
+
 /// CPU 스케일링 관리자
 ///
 /// CPU 클럭 속도를 제어합니다.
@@ -46,6 +57,14 @@ pub struct CpuScaling {
     current_p_state: u8,
     /// 제어 지원 여부 (CPUID/MSR 가드)
     supported: bool,
+    /// 현재 Governor
+    governor: ScalingGovernor,
+    /// Hysteresis: 이전 CPU 사용률 (빈번한 스위칭 방지)
+    last_cpu_usage: u8,
+    /// On-demand 업데이트 간격 (ms)
+    update_interval_ms: u64,
+    /// 마지막 업데이트 시간 (ms)
+    last_update_time_ms: u64,
 }
 
 impl CpuScaling {
@@ -55,7 +74,110 @@ impl CpuScaling {
             initialized: false,
             current_p_state: 0,
             supported: true,
+            governor: ScalingGovernor::Ondemand,
+            last_cpu_usage: 50,
+            update_interval_ms: 100, // 100ms마다 업데이트
+            last_update_time_ms: 0,
         }
+    }
+    
+    /// Governor 설정
+    pub fn set_governor(&mut self, governor: ScalingGovernor) -> Result<(), PowerError> {
+        if !self.initialized {
+            return Err(PowerError::NotInitialized);
+        }
+        
+        self.governor = governor;
+        
+        // Governor에 따라 즉시 적용
+        match governor {
+            ScalingGovernor::Performance => self.set_max_performance()?,
+            ScalingGovernor::Powersave => self.set_power_saving()?,
+            ScalingGovernor::Ondemand => {
+                // On-demand는 현재 사용률에 따라 설정
+                self.set_balanced()?;
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// 현재 Governor 가져오기
+    pub fn get_governor(&self) -> ScalingGovernor {
+        self.governor
+    }
+    
+    /// On-demand governor 업데이트 (hysteresis 포함)
+    /// 
+    /// # Arguments
+    /// * `cpu_usage_percent` - 현재 CPU 사용률 (0-100)
+    /// * `now_ms` - 현재 시간 (ms)
+    pub fn update_ondemand(&mut self, cpu_usage_percent: u8, now_ms: u64) -> Result<(), PowerError> {
+        if !self.initialized {
+            return Err(PowerError::NotInitialized);
+        }
+        
+        if self.governor != ScalingGovernor::Ondemand {
+            return Ok(()); // On-demand가 아니면 업데이트 안 함
+        }
+        
+        // 업데이트 간격 체크
+        if now_ms - self.last_update_time_ms < self.update_interval_ms {
+            return Ok(());
+        }
+        
+        self.last_update_time_ms = now_ms;
+        
+        // Hysteresis: 임계값에 약간의 여유를 두어 빈번한 스위칭 방지
+        const HYSTERESIS_THRESHOLD: u8 = 5; // 5% 여유
+        
+        let target_p_state = if cpu_usage_percent > 80 + HYSTERESIS_THRESHOLD {
+            // 높은 사용률: 성능 모드
+            if self.last_cpu_usage <= 80 {
+                // 이전에 낮은 사용률이었으면 즉시 전환
+                0
+            } else if cpu_usage_percent > 90 {
+                // 매우 높은 사용률이면 즉시 전환
+                0
+            } else {
+                // 점진적 증가
+                self.current_p_state.saturating_sub(1)
+            }
+        } else if cpu_usage_percent < 20.saturating_sub(HYSTERESIS_THRESHOLD) {
+            // 낮은 사용률: 절전 모드
+            if self.last_cpu_usage >= 20 {
+                // 이전에 높은 사용률이었으면 즉시 전환
+                2
+            } else if cpu_usage_percent < 10 {
+                // 매우 낮은 사용률이면 즉시 전환
+                2
+            } else {
+                // 점진적 감소
+                self.current_p_state.saturating_add(1).min(2)
+            }
+        } else {
+            // 중간 사용률: 균형 모드
+            if self.last_cpu_usage < 20 || self.last_cpu_usage > 80 {
+                // 극단에서 중간으로 전환
+                1
+            } else {
+                // 유지
+                self.current_p_state
+            }
+        };
+        
+        // P-state 변경이 필요하면 적용
+        if target_p_state != self.current_p_state {
+            match target_p_state {
+                0 => self.set_max_performance()?,
+                1 => self.set_balanced()?,
+                2 => self.set_power_saving()?,
+                _ => {}
+            }
+        }
+        
+        self.last_cpu_usage = cpu_usage_percent;
+        Ok(())
     }
     
     /// CPU 스케일링 초기화

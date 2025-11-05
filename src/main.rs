@@ -60,12 +60,9 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
     }
     simple_os::log_info!("Boot info initialized");
     simple_os::log_info!("Memory map entries: {}", simple_os::boot::memory_map_len());
-    // 이전 크래시 보고
+    // 이전 크래시 보고 (심볼화된 덤프)
     if let Some(dump) = simple_os::crash::take() {
-        simple_os::log_warn!(
-            "Previous crash detected: reason={} rip=0x{:x} code=0x{:x}",
-            dump.reason, dump.rip, dump.code
-        );
+        simple_os::crash::print_crash_dump(&dump);
     }
     
     // 3. PIC 리매핑
@@ -328,6 +325,20 @@ fn desktop_loop() -> ! {
         simple_os::net::low_power_tick(current_time);
         // 전력 통계 틱
         simple_os::power::stats::tick(current_time);
+        
+        // Thermal 관리 (10초마다 체크)
+        if current_time % 10_000 == 0 {
+            simple_os::power::temps::check_thermal_and_throttle();
+        }
+        
+        // On-demand governor 업데이트 (100ms마다)
+        if let Some(manager) = simple_os::power::get_manager() {
+            if let Some(pm) = manager.lock().as_mut() {
+                // TODO: 실제 CPU 사용률 계산 필요
+                let cpu_usage = 0u8; // 임시로 0
+                let _ = pm.update_ondemand(cpu_usage, current_time);
+            }
+        }
     }
 }
 

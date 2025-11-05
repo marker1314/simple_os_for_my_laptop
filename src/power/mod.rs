@@ -21,6 +21,7 @@ pub mod temps;
 pub use manager::PowerManager;
 pub use policy::{PowerPolicy, PowerMode};
 pub use idle::{IdleStateManager, CState};
+pub use scaling::ScalingGovernor;
 
 use spin::Mutex;
 

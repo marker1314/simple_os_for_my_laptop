@@ -170,3 +170,4 @@ pub fn send_reschedule_ipi(dest_apic_id: u8) {
     send_ipi(dest_apic_id, RESCHEDULE_VECTOR);
 }
 
+

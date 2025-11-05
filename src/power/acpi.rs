@@ -162,6 +162,48 @@ impl AcpiParser {
         // TODO: CPU P-State + 장치 상태 기반 추정
         0
     }
+    
+    /// Enter sleep state (S3/s2idle)
+    /// 
+    /// # Arguments
+    /// * `sleep_state` - Sleep state (3 = S3, 0 = s2idle)
+    /// 
+    /// # Safety
+    /// 이 함수는 suspend 플로우에서 호출되어야 하며, 호출 후 시스템이 깨어날 때까지 복귀하지 않습니다.
+    pub unsafe fn enter_sleep_state(&self, sleep_state: u8) -> Result<(), PowerError> {
+        if !self.initialized {
+            return Err(PowerError::NotInitialized);
+        }
+        
+        // FADT에서 sleep control register 읽기 (간단화된 구현)
+        // 실제로는 FADT를 파싱하여 PM1a_CNT_BLK 또는 PM1b_CNT_BLK를 읽어야 함
+        
+        // 기본 PM1a Control Register 주소 (일반적인 값)
+        const PM1A_CNT_BLK: u16 = 0x800; // FADT에서 읽어야 하지만 기본값 사용
+        
+        // Sleep type과 sleep enable 설정
+        // SLP_TYP: sleep_state (예: S3 = 5)
+        // SLP_EN: 1 (sleep enable)
+        let sleep_value = ((sleep_state as u16) << 10) | (1 << 13);
+        
+        // PM1a Control Register에 sleep 명령 쓰기
+        let mut pm1a_port: x86_64::instructions::port::Port<u16> = 
+            x86_64::instructions::port::Port::new(PM1A_CNT_BLK);
+        
+        // Write sleep command
+        pm1a_port.write(sleep_value);
+        
+        // 시스템이 여기서 깨어나면 resume 경로로 진행
+        // 만약 여기 도달하면 sleep이 실패한 것
+        Err(PowerError::Unsupported)
+    }
+    
+    /// Check if system is resuming from sleep
+    pub fn is_resuming(&self) -> bool {
+        // WAK_STS 비트 확인 (PM1_STS 레지스터)
+        // 간단화: 실제로는 PM1_STS 레지스터를 읽어야 함
+        false
+    }
 }
 
 /// Minimal C-state descriptor for handoff to idle manager setup

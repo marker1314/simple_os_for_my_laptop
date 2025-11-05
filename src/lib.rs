@@ -27,7 +27,7 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     crate::serial_println!("===================\n");
     // 최근 로그 덤프
     crate::logging::dump_recent();
-    // 기록
+    // 기록 (RIP는 panic 핸들러에서 직접 캡처 시도)
     crate::crash::record_panic();
     
     loop {
@@ -58,6 +58,7 @@ pub mod smp;
 pub mod logging;
 pub mod config;
 pub mod crash;
+pub mod kernel;
 
 // 매크로는 자동으로 crate 루트에 사용 가능하므로 재export 불필요
 // 사용: simple_os::serial_println!() 또는 simple_os::log_info!()

@@ -7,6 +7,7 @@ pub mod frame;
 pub mod paging;
 pub mod heap;
 pub mod slab;
+pub mod guard;
 
 pub use map::{init as init_memory_map, get as get_memory_map, MemoryMap, MemoryType, ParsedMemoryRegion};
 pub use frame::{init as init_frame_allocator, allocate_frame};

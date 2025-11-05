@@ -41,10 +41,16 @@ if [ ! -f "$BOOTIMAGE_PATH" ]; then
     exit 1
 fi
 
+# 부팅 타임라인 캡처를 위한 로그 파일
+TIMELINE_LOG="boot_timeline_$(date +%Y%m%d_%H%M%S).log"
+
+echo "부팅 타임라인 로그: $TIMELINE_LOG"
+echo ""
+
 # QEMU를 GDB 서버 모드로 실행 (-s는 -gdb tcp::1234와 동일, -S는 시작 시 정지)
+# 시리얼 출력을 파일로도 저장
 qemu-system-x86_64 \
     -s -S \
     -drive format=raw,file="$BOOTIMAGE_PATH" \
-    -serial stdio \
-    -display none
+    -serial stdio 2>&1 | tee "$TIMELINE_LOG"
 

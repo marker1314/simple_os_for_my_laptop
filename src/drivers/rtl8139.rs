@@ -596,8 +596,7 @@ impl EthernetDriver for Rtl8139Driver {
                 }
                 crate::log_debug!("RTL8139: Receive OK, drained {} packets", drained);
                 // 활동이 있으니 저전력 해제
-                self.low_power = false;
-                crate::drivers::rtl8139::note_activity(crate::drivers::timer::get_milliseconds());
+                crate::drivers::rtl8139::wake_on_activity(self);
             }
 
             if (isr & ISR_TOK) != 0 {
@@ -640,14 +639,29 @@ pub fn set_idle_timeout_ms(ms: u64) { let mut c = NET_POWER.lock(); c.idle_timeo
 pub fn note_activity(now_ms: u64) { let mut c = NET_POWER.lock(); c.last_activity_ms = now_ms; }
 
 /// 네트워크 전원관리: 유휴이면 RX 중지로 저전력 진입
+/// 주기적 poll을 제거하고 인터럽트 기반으로만 동작
 pub fn maybe_enter_low_power(now_ms: u64, driver: &mut Rtl8139Driver) {
     let (last, timeout) = { let c = NET_POWER.lock(); (c.last_activity_ms, c.idle_timeout_ms) };
     if timeout == 0 { return; }
     if now_ms.saturating_sub(last) < timeout { return; }
     if !driver.low_power && driver.initialized {
-        unsafe { driver.stop_receive(); }
+        unsafe { 
+            driver.stop_receive();
+            // 주기적 TX/RX poll 제거 - 인터럽트만 사용
+            // 인터럽트는 활성화 상태로 유지 (패킷 수신 시 깨움)
+        }
         driver.low_power = true;
-        crate::log_info!("RTL8139 entered low-power receive stop");
+        crate::log_info!("RTL8139 entered low-power: RX stopped, interrupt-driven only");
+    }
+}
+
+/// 네트워크 활동 감지 (패킷 송신/수신 시 호출)
+pub fn wake_on_activity(driver: &mut Rtl8139Driver) {
+    if driver.low_power && driver.initialized {
+        unsafe { driver.resume_receive(); }
+        driver.low_power = false;
+        note_activity(crate::drivers::timer::get_milliseconds());
+        crate::log_info!("RTL8139 woke from low-power: RX resumed");
     }
 }
 

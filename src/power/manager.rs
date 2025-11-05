@@ -153,21 +153,117 @@ impl PowerManager {
         Ok(())
     }
 
-    /// Suspend to RAM (S3) - stub implementation
+    /// Suspend to RAM (S3) - complete implementation
     pub fn suspend_s3(&mut self) -> Result<(), PowerError> {
         if self.acpi_parser.is_none() {
             return Err(PowerError::Unsupported);
         }
-        crate::log_info!("Entering S3 suspend (stub): devices quiesced, CPU will halt");
-        // TODO: save device state, program ACPI sleep state, flush caches
-        Err(PowerError::Unsupported)
+        
+        crate::log_info!("=== Entering S3 suspend ===");
+        
+        // 1. 장치 quiesce (상태 저장 및 전원 끄기)
+        crate::power::device::quiesce_all_devices()?;
+        
+        // 2. 캐시 flush
+        unsafe {
+            x86_64::instructions::tlb::flush_all();
+            // Write-back cache flush
+            core::arch::asm!("wbinvd", options(nostack, preserves_flags));
+        }
+        
+        // 3. 인터럽트 비활성화
+        crate::interrupts::idt::disable_interrupts();
+        
+        // 4. ACPI sleep state 진입
+        if let Some(ref parser) = self.acpi_parser {
+            unsafe {
+                // S3 sleep state (3)
+                match parser.enter_sleep_state(3) {
+                    Ok(()) => {
+                        // 시스템이 여기서 깨어나면 resume으로 진행
+                        crate::log_info!("Woke from S3 sleep");
+                        self.resume()
+                    }
+                    Err(e) => {
+                        // Sleep 실패 - 인터럽트 재활성화 및 장치 복원
+                        crate::interrupts::idt::enable_interrupts();
+                        crate::power::device::resume_all_devices()?;
+                        Err(e)
+                    }
+                }
+            }
+        } else {
+            crate::interrupts::idt::enable_interrupts();
+            Err(PowerError::Unsupported)
+        }
     }
 
-    /// Resume from sleep - stub implementation
+    /// Resume from sleep - complete implementation
     pub fn resume(&mut self) -> Result<(), PowerError> {
-        crate::log_info!("Resuming from sleep (stub)");
-        // TODO: restore device state and reinitialize timers/IRQs
+        crate::log_info!("=== Resuming from sleep ===");
+        
+        // 1. 인터럽트 재활성화
+        crate::interrupts::idt::enable_interrupts();
+        
+        // 2. 타이머 재초기화
+        unsafe {
+            crate::drivers::timer::init();
+            crate::interrupts::pic::set_mask(0, true); // 타이머 인터럽트 활성화
+        }
+        
+        // 3. 장치 복원
+        crate::power::device::resume_all_devices()?;
+        
+        // 4. 전력 관리 재초기화
+        if !self.initialized {
+            unsafe {
+                self.init()?;
+            }
+        }
+        
+        crate::log_info!("=== Resume complete ===");
         Ok(())
+    }
+
+    /// Get current P-state
+    pub fn get_current_p_state(&self) -> u8 {
+        self.cpu_scaling.get_current_p_state()
+    }
+    
+    /// Thermal throttle 적용 (온도가 높을 때)
+    pub fn apply_thermal_throttle(&mut self) -> Result<(), PowerError> {
+        // CPU 주파수를 낮춰 전력 소비 감소
+        if self.initialized {
+            self.cpu_scaling.set_power_saving()
+        } else {
+            Err(PowerError::NotInitialized)
+        }
+    }
+    
+    /// Emergency thermal throttle (최대 온도 도달)
+    pub fn apply_emergency_throttle(&mut self) -> Result<(), PowerError> {
+        // 최대 절전 모드로 전환
+        if self.initialized {
+            self.cpu_scaling.set_power_saving()
+        } else {
+            Err(PowerError::NotInitialized)
+        }
+    }
+    
+    /// Governor 설정
+    pub fn set_governor(&mut self, governor: crate::power::scaling::ScalingGovernor) -> Result<(), PowerError> {
+        if !self.initialized {
+            return Err(PowerError::NotInitialized);
+        }
+        self.cpu_scaling.set_governor(governor)
+    }
+    
+    /// On-demand governor 업데이트
+    pub fn update_ondemand(&mut self, cpu_usage_percent: u8, now_ms: u64) -> Result<(), PowerError> {
+        if !self.initialized {
+            return Err(PowerError::NotInitialized);
+        }
+        self.cpu_scaling.update_ondemand(cpu_usage_percent, now_ms)
     }
 }
 

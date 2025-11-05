@@ -22,6 +22,22 @@ impl IdleStateManager {
         let snapshot = get_default_cstates();
         Self { available: snapshot, current: 0 }
     }
+    
+    /// Get recommended C-state based on policy
+    pub fn get_recommended_c_state(&self, policy_threshold: u8, cpu_usage: u8) -> u8 {
+        if cpu_usage <= policy_threshold {
+            // Find the deepest available C-state
+            let mut deepest = 0u8;
+            for state in self.available.iter().flatten() {
+                if state.level > deepest {
+                    deepest = state.level;
+                }
+            }
+            deepest
+        } else {
+            0 // C0 - no idle
+        }
+    }
 
     #[inline]
     pub unsafe fn enter_c_state(&self, target_level: u8) {

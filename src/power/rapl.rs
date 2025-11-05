@@ -1,5 +1,7 @@
 //! Intel RAPL MSR reading (best-effort)
 
+use crate::power::PowerError;
+
 const MSR_RAPL_POWER_UNIT: u32 = 0x606; // energy units in bits 8..12
 const MSR_PKG_ENERGY_STATUS: u32 = 0x611;
 
@@ -59,6 +61,90 @@ pub fn read_energy_unit_nanojoules() -> Option<u64> {
         let nj_per_lsb: u64 = 1_000_000_000u64 >> eu;
         Some(nj_per_lsb)
     }
+}
+
+/// Read power unit (watts per LSB)
+pub fn read_power_unit_watts() -> Option<f32> {
+    if !msr_supported() { return None; }
+    unsafe {
+        let units = read_msr(MSR_RAPL_POWER_UNIT);
+        let pu = ((units >> 0) & 0x0F) as u32; // Power unit in bits 0-3
+        // Power unit = 1 / 2^pu Watts per LSB
+        let watts_per_lsb = 1.0f32 / (1u32 << pu) as f32;
+        Some(watts_per_lsb)
+    }
+}
+
+/// RAPL Power Limit MSRs
+const MSR_PKG_POWER_LIMIT: u32 = 0x610;
+const MSR_PKG_ENERGY_STATUS: u32 = 0x611;
+
+/// RAPL Power Limit 설정
+/// 
+/// # Arguments
+/// * `power_limit_watts` - 전력 제한 (Watts)
+/// * `time_window_sec` - 시간 윈도우 (초)
+pub fn set_power_limit(power_limit_watts: f32, time_window_sec: u32) -> Result<(), PowerError> {
+    if !msr_supported() {
+        return Err(PowerError::Unsupported);
+    }
+    
+    let power_unit = match read_power_unit_watts() {
+        Some(unit) => unit,
+        None => return Err(PowerError::Unsupported),
+    };
+    
+    // Power limit in LSB units
+    let power_limit_lsb = (power_limit_watts / power_unit) as u32;
+    
+    // Time window encoding (typically 1.0s units)
+    let time_window_lsb = time_window_sec;
+    
+    unsafe {
+        let mut limit = read_msr(MSR_PKG_POWER_LIMIT);
+        
+        // Set power limit 1 (bits 14:0 for power, bits 23:17 for time window)
+        // Limit 1 enable bit (bit 15)
+        limit &= !0x7FFF; // Clear power limit bits
+        limit &= !0xFE0000; // Clear time window bits
+        limit |= (power_limit_lsb as u64) & 0x7FFF;
+        limit |= ((time_window_lsb as u64) & 0x7F) << 17;
+        limit |= 1 << 15; // Enable limit 1
+        
+        write_msr(MSR_PKG_POWER_LIMIT, limit);
+    }
+    
+    Ok(())
+}
+
+#[inline]
+unsafe fn write_msr(msr: u32, value: u64) {
+    let low: u32 = value as u32;
+    let high: u32 = (value >> 32) as u32;
+    core::arch::asm!(
+        "wrmsr",
+        in("ecx") msr,
+        in("eax") low,
+        in("edx") high,
+        options(nostack, preserves_flags)
+    );
+}
+
+/// Read current power consumption from RAPL (Watts)
+pub fn read_power_watts() -> Option<f32> {
+    if !msr_supported() { return None; }
+    
+    // RAPL은 에너지만 제공하므로, 시간 간격으로 전력 계산 필요
+    // 이 함수는 간단한 추정치만 제공
+    let energy_unit_nj = read_energy_unit_nanojoules()?;
+    let energy_status = read_package_energy_status()?;
+    
+    // 에너지를 나노줄로 변환
+    let energy_nj = (energy_status as u64) * energy_unit_nj;
+    
+    // 전력 계산을 위해서는 시간 간격이 필요하므로 여기서는 None 반환
+    // 실제 전력 계산은 stats.rs의 tick() 함수에서 수행
+    None
 }
 
 

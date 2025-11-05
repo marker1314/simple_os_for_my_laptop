@@ -22,6 +22,12 @@ static TICK_COUNT: Mutex<u64> = Mutex::new(0);
 /// 밀리초당 틱 수 (1000Hz = 1ms마다 인터럽트)
 const TICKS_PER_SECOND: u32 = 1000;
 
+/// Idle 상태에서 동적 tick 조정
+/// Idle 상태일 때는 더 긴 간격으로 tick (타겟 ≥ 10ms)
+static IDLE_TICK_MODE: Mutex<bool> = Mutex::new(false);
+static SKIP_TICKS: Mutex<u32> = Mutex::new(0);
+static TICK_SKIP_COUNTER: Mutex<u32> = Mutex::new(0);
+
 /// 밀리초 가져오기
 pub fn get_milliseconds() -> u64 {
     *TICK_COUNT.lock()
@@ -65,6 +71,24 @@ pub unsafe fn init() {
 /// 타이머 틱이 발생할 때마다 호출됩니다.
 /// 이 함수는 인터럽트 컨텍스트에서 실행되므로 빠르게 처리해야 합니다.
 pub extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: x86_64::structures::idt::InterruptStackFrame) {
+    // Idle tick coalescing: 일부 tick을 스킵하여 wakeup 감소
+    let mut skip_counter = TICK_SKIP_COUNTER.lock();
+    let skip_ticks = *SKIP_TICKS.lock();
+    let idle_mode = *IDLE_TICK_MODE.lock();
+    
+    if idle_mode && skip_ticks > 0 {
+        *skip_counter += 1;
+        if *skip_counter < skip_ticks {
+            // Tick 스킵 - 타이머만 증가, 나머지는 처리하지 않음
+            *TICK_COUNT.lock() += 1;
+            unsafe {
+                pic::end_of_interrupt(0);
+            }
+            return;
+        }
+        *skip_counter = 0;
+    }
+    
     // 타이머 틱 증가
     *TICK_COUNT.lock() += 1;
     
@@ -72,10 +96,21 @@ pub extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: x86_64::stru
     // TODO: 컨텍스트 스위칭이 필요하면 여기서 처리
     crate::scheduler::tick();
     
+    // Watchdog 체크
+    crate::kernel::watchdog::check();
+    
     // PIC에 인터럽트 종료 신호 전송 (IRQ 0)
     unsafe {
         pic::end_of_interrupt(0);
     }
+}
+
+/// Idle 상태에서 tick coalescing 활성화
+/// skip_ticks: 몇 개의 tick을 스킵할지 (예: 10 = 10ms마다 tick)
+pub fn set_idle_tick_coalescing(enabled: bool, skip_ticks: u32) {
+    *IDLE_TICK_MODE.lock() = enabled;
+    *SKIP_TICKS.lock() = skip_ticks;
+    *TICK_SKIP_COUNTER.lock() = 0;
 }
 
 /// 지정된 밀리초 동안 대기

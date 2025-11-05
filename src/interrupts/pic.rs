@@ -4,6 +4,7 @@
 
 use x86_64::instructions::port::Port;
 use x86_64::instructions::interrupts;
+use spin::Mutex;
 
 /// PIC 제어 포트
 const PIC1_COMMAND: u16 = 0x20;
@@ -96,5 +97,49 @@ pub unsafe fn end_of_interrupt(irq: u8) {
     }
     // 마스터 PIC에 EOI 전송
     Port::new(PIC1_COMMAND).write(0x20_u8);
+}
+
+/// PIC 마스크 읽기
+/// 
+/// # Returns
+/// (PIC1 마스크, PIC2 마스크)
+pub unsafe fn read_mask() -> (u8, u8) {
+    let pic1_mask = Port::new(PIC1_DATA).read();
+    let pic2_mask = Port::new(PIC2_DATA).read();
+    (pic1_mask, pic2_mask)
+}
+
+/// PIC 마스크 쓰기
+pub unsafe fn write_mask(pic1_mask: u8, pic2_mask: u8) {
+    Port::new(PIC1_DATA).write(pic1_mask);
+    Port::new(PIC2_DATA).write(pic2_mask);
+}
+
+/// 인터럽트 마스크 상태 저장
+pub struct InterruptMaskState {
+    pub pic1_mask: u8,
+    pub pic2_mask: u8,
+}
+
+static SAVED_INTERRUPT_MASK: Mutex<Option<InterruptMaskState>> = Mutex::new(None);
+
+/// 인터럽트 마스크 상태 저장 (suspend 전)
+pub fn save_interrupt_mask() {
+    unsafe {
+        let (pic1, pic2) = read_mask();
+        *SAVED_INTERRUPT_MASK.lock() = Some(InterruptMaskState {
+            pic1_mask: pic1,
+            pic2_mask: pic2,
+        });
+    }
+}
+
+/// 인터럽트 마스크 상태 복원 (resume 후)
+pub fn restore_interrupt_mask() {
+    if let Some(state) = SAVED_INTERRUPT_MASK.lock().take() {
+        unsafe {
+            write_mask(state.pic1_mask, state.pic2_mask);
+        }
+    }
 }
 

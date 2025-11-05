@@ -238,3 +238,81 @@ pub fn get_cache_stats() -> Option<CacheStats> {
     cache.as_ref().map(|c| c.stats())
 }
 
+/// Writeback 정책 설정
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WritebackPolicy {
+    /// 즉시 쓰기 (sync)
+    Immediate,
+    /// 주기적 쓰기 (30초마다)
+    Periodic,
+    /// 버스트 쓰기 (dirty 블록이 많을 때만)
+    Bursty,
+}
+
+/// Writeback 정책
+static WRITEBACK_POLICY: Mutex<WritebackPolicy> = Mutex::new(WritebackPolicy::Bursty);
+
+/// Writeback 정책 설정
+pub fn set_writeback_policy(policy: WritebackPolicy) {
+    *WRITEBACK_POLICY.lock() = policy;
+}
+
+/// Writeback 정책 가져오기
+pub fn get_writeback_policy() -> WritebackPolicy {
+    *WRITEBACK_POLICY.lock()
+}
+
+/// Bursty flush 임계값
+const BURSTY_THRESHOLD: usize = 32; // 32개 이상 dirty 블록이면 flush
+
+/// Dirty 블록 플러시 (정책에 따라)
+/// 
+/// # Arguments
+/// * `force` - 강제 플러시 (true면 즉시, false면 정책에 따라)
+/// * `write_fn` - 실제 쓰기 함수
+pub fn flush_dirty_blocks<F>(force: bool, write_fn: F) -> Result<usize, &'static str>
+where
+    F: Fn(u64, &[u8]) -> Result<(), &'static str>,
+{
+    let policy = get_writeback_policy();
+    let dirty_blocks = get_dirty_blocks();
+    
+    if dirty_blocks.is_empty() {
+        return Ok(0);
+    }
+    
+    // 정책에 따라 플러시 결정
+    let should_flush = match policy {
+        WritebackPolicy::Immediate => true,
+        WritebackPolicy::Periodic => force, // 주기적 호출 시에만
+        WritebackPolicy::Bursty => force || dirty_blocks.len() >= BURSTY_THRESHOLD,
+    };
+    
+    if !should_flush && !force {
+        return Ok(0);
+    }
+    
+    // Dirty 블록 쓰기
+    let mut cache = GLOBAL_CACHE.lock();
+    let mut flushed = 0;
+    
+    if let Some(ref mut c) = *cache {
+        for &block_num in &dirty_blocks {
+            if let Some(block) = c.get(block_num) {
+                match write_fn(block_num, block.read()) {
+                    Ok(()) => {
+                        block.clear_dirty();
+                        flushed += 1;
+                    }
+                    Err(e) => {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+    }
+    
+    Ok(flushed)
+}
+
+

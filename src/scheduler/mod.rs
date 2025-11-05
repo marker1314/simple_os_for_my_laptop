@@ -43,6 +43,9 @@ pub fn add_thread(thread: Arc<Mutex<Thread>>) {
 /// # Returns
 /// 컨텍스트 스위칭이 필요한 경우 `true`, 그렇지 않으면 `false`
 pub fn tick() -> bool {
+    // Watchdog heartbeat 업데이트
+    crate::kernel::watchdog::heartbeat();
+    
     let mut scheduler = SCHEDULER.lock();
     if let Some(ref mut sched) = *scheduler {
         sched.tick()

@@ -19,6 +19,9 @@ pub struct Window {
     pub title_bar_color: Color,
     pub is_focused: bool,
     pub is_visible: bool,
+    pub is_minimized: bool,
+    pub is_occluded: bool,  // 다른 윈도우에 가려짐
+    pub needs_redraw: bool,  // 이 윈도우만 redraw 필요
 }
 
 impl Window {
@@ -35,13 +38,16 @@ impl Window {
             title_bar_color: Color::new(0, 120, 215),
             is_focused: false,
             is_visible: true,
+            is_minimized: false,
+            is_occluded: false,
+            needs_redraw: false,
         }
     }
 
     /// 윈도우 렌더링
     pub fn render(&self) {
-        if !self.is_visible {
-            return;
+        if !self.is_visible || self.is_minimized || self.is_occluded {
+            return; // occluded/minimized 윈도우는 렌더링 스킵
         }
 
         const TITLE_BAR_HEIGHT: usize = 24;
@@ -102,6 +108,26 @@ impl Window {
     pub fn set_visible(&mut self, visible: bool) {
         self.is_visible = visible;
     }
+    
+    /// Minimized 상태 설정
+    pub fn set_minimized(&mut self, minimized: bool) {
+        self.is_minimized = minimized;
+    }
+    
+    /// Occluded 상태 설정 (다른 윈도우에 가려짐)
+    pub fn set_occluded(&mut self, occluded: bool) {
+        self.is_occluded = occluded;
+    }
+    
+    /// Redraw 필요 여부 설정
+    pub fn set_needs_redraw(&mut self, needs: bool) {
+        self.needs_redraw = needs;
+    }
+    
+    /// Redraw 필요 여부 확인
+    pub fn needs_redraw(&self) -> bool {
+        self.needs_redraw
+    }
 
     /// 마우스 좌표가 윈도우 내부에 있는지 확인
     pub fn contains_point(&self, x: isize, y: isize) -> bool {
@@ -129,4 +155,5 @@ impl Window {
             && y < (self.y + TITLE_BAR_HEIGHT) as isize
     }
 }
+
 

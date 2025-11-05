@@ -35,9 +35,19 @@ if [ ! -f "$BOOTIMAGE_PATH" ]; then
     exit 1
 fi
 
-# QEMU 실행 (시리얼 포트를 콘솔로 리다이렉트)
+# 전력 통계 로그 파일
+POWER_LOG="power_stats_$(date +%Y%m%d_%H%M%S).log"
+BOOT_TIMELINE="boot_timeline_$(date +%Y%m%d_%H%M%S).log"
+
+echo "전력 통계 로그: $POWER_LOG"
+echo "부팅 타임라인 로그: $BOOT_TIMELINE"
+echo ""
+echo "참고: 커널 부팅 후 자동으로 전력 통계 수집이 시작됩니다."
+echo "      CSV 형식으로 내보내려면 커널에서 export 함수를 호출하세요."
+echo ""
+
+# QEMU 실행 (시리얼 포트를 콘솔과 파일로 리다이렉트)
 qemu-system-x86_64 \
     -drive format=raw,file="$BOOTIMAGE_PATH" \
-    -serial stdio \
-    -display none
+    -serial stdio 2>&1 | tee "$POWER_LOG" | grep -E "(Power:|timestamp|pkg_w|wakeups)" > "$BOOT_TIMELINE" &
 

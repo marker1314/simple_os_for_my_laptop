@@ -216,3 +216,4 @@ if __name__ == "__main__":
         f.write(font_data)
     print(f"Generated font8x8_basic.bin ({len(font_data)} bytes)")
 
+
