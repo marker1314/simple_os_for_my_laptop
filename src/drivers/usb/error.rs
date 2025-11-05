@@ -23,6 +23,14 @@ pub enum UsbError {
     RequestFailed,
     /// 디바이스 열거 실패
     EnumerationFailed,
+    /// 잘못된 디스크립터
+    InvalidDescriptor,
+    /// 디바이스 제한 도달 (최대 127개)
+    DeviceLimitReached,
+    /// 디바이스 에러
+    DeviceError,
+    /// 구현되지 않음
+    NotImplemented,
 }
 
 impl core::fmt::Display for UsbError {
@@ -37,6 +45,10 @@ impl core::fmt::Display for UsbError {
             UsbError::HostControllerInitFailed => write!(f, "USB host controller initialization failed"),
             UsbError::RequestFailed => write!(f, "USB request failed"),
             UsbError::EnumerationFailed => write!(f, "USB device enumeration failed"),
+            UsbError::InvalidDescriptor => write!(f, "Invalid USB descriptor"),
+            UsbError::DeviceLimitReached => write!(f, "USB device limit reached (max 127)"),
+            UsbError::DeviceError => write!(f, "USB device error"),
+            UsbError::NotImplemented => write!(f, "USB feature not implemented"),
         }
     }
 }

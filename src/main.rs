@@ -205,6 +205,13 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
                 };
                 simple_os::memory::oom_killer::init_oom_killer(oom_config);
                 
+                // 메모리 누수 감지기 활성화 (디버그 모드)
+                #[cfg(debug_assertions)]
+                {
+                    simple_os::memory::leak_detector::set_enabled(true);
+                    simple_os::log_info!("Memory leak detector enabled");
+                }
+                
                 // 사용자 활동 감지기 초기화
                 simple_os::power::user_activity::init_user_activity_detector(100, 30000); // 30초 유휴 임계값
                 
@@ -244,22 +251,43 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
         }
     }
     
+    // 15.3. 오디오 드라이버 초기화
+    #[cfg(feature = "audio")]
+    unsafe {
+        match simple_os::drivers::audio::init() {
+            Ok(()) => {
+                simple_os::log_info!("Audio subsystem initialized");
+            }
+            Err(e) => {
+                simple_os::log_warn!("Failed to initialize audio subsystem: {}", e);
+                // 오디오 초기화 실패해도 커널은 계속 실행 가능
+            }
+        }
+    }
+    
     // 15.5. USB 드라이버 초기화
     #[cfg(feature = "usb")]
     unsafe {
         match simple_os::drivers::usb::init() {
             Ok(()) => {
                 simple_os::log_info!("USB subsystem initialized");
-                // TODO: USB 디바이스 열거 (구현 후 활성화)
-                // if let Err(e) = simple_os::drivers::usb::enumerate_devices() {
-                //     simple_os::log_warn!("Failed to enumerate USB devices: {}", e);
-                // }
+                // USB 디바이스 열거 시도
+                if let Err(e) = simple_os::drivers::usb::enumerate_devices() {
+                    simple_os::log_warn!("Failed to enumerate USB devices: {}", e);
+                    // 열거 실패해도 커널은 계속 실행 가능
+                }
             }
             Err(e) => {
                 simple_os::log_warn!("Failed to initialize USB subsystem: {}", e);
                 // USB 초기화 실패해도 커널은 계속 실행 가능
             }
         }
+    }
+    
+    // 15.6. Unsafe 블록 통계 출력 (디버그 모드)
+    #[cfg(debug_assertions)]
+    {
+        simple_os::safety::print_unsafe_stats();
     }
     
     // 16. 프레임버퍼 초기화 (GUI 지원)

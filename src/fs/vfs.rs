@@ -57,6 +57,8 @@ pub struct FileMetadata {
     pub created: u64,   // 생성 시간 (Unix timestamp)
     pub modified: u64,   // 수정 시간 (Unix timestamp)
     pub accessed: u64,   // 접근 시간 (Unix timestamp)
+    pub uid: u32,        // 소유자 사용자 ID
+    pub gid: u32,        // 소유자 그룹 ID
 }
 
 /// 파일 오프셋 타입

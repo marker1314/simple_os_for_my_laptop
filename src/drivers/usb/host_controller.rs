@@ -8,6 +8,8 @@
 
 use crate::drivers::pci::PciDevice;
 use crate::drivers::usb::error::UsbError;
+use crate::drivers::usb::xhci::XhciController;
+use crate::drivers::usb::ehci::EhciController;
 
 /// USB 호스트 컨트롤러 타입
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,78 +94,159 @@ pub fn get_usb_controller_type(pci_device: &PciDevice) -> Option<UsbHostControll
     }
 }
 
-/// USB 호스트 컨트롤러 기본 구현
+/// USB 호스트 컨트롤러 래퍼
 /// 
-/// 실제 구현은 각 컨트롤러 타입별로 별도 모듈로 분리할 예정
-pub struct GenericUsbHostController {
-    pci_device: PciDevice,
-    controller_type: UsbHostControllerType,
-    base_address: u64,
-    initialized: bool,
+/// 실제 컨트롤러 타입에 따라 xHCI 또는 EHCI를 사용합니다.
+pub enum GenericUsbHostController {
+    Xhci(XhciController),
+    Ehci(EhciController),
+    Generic {
+        pci_device: PciDevice,
+        controller_type: UsbHostControllerType,
+        base_address: u64,
+        initialized: bool,
+    },
 }
 
 impl GenericUsbHostController {
     /// 새 USB 호스트 컨트롤러 생성
     pub fn new(pci_device: PciDevice, controller_type: UsbHostControllerType) -> Self {
-        Self {
-            pci_device,
-            controller_type,
-            base_address: 0,
-            initialized: false,
+        match controller_type {
+            UsbHostControllerType::Xhci => {
+                GenericUsbHostController::Xhci(XhciController::new(pci_device))
+            }
+            UsbHostControllerType::Ehci => {
+                GenericUsbHostController::Ehci(EhciController::new(pci_device))
+            }
+            _ => {
+                // OHCI/UHCI는 아직 구현되지 않음
+                GenericUsbHostController::Generic {
+                    pci_device,
+                    controller_type,
+                    base_address: 0,
+                    initialized: false,
+                }
+            }
         }
     }
     
-    /// PCI 디바이스에서 베이스 주소 읽기
-    pub unsafe fn read_base_address(&mut self) -> Result<u64, UsbError> {
-        // BAR0 읽기
-        let bar0 = self.pci_device.bar0;
-        
-        // MMIO 또는 IO 공간 확인
-        if (bar0 & 0x01) == 0 {
-            // MMIO 공간
-            self.base_address = (bar0 & !0xF) as u64;
-            crate::log_info!("USB controller MMIO base: 0x{:016X}", self.base_address);
-        } else {
-            // IO 공간
-            self.base_address = (bar0 & !0x3) as u64;
-            crate::log_info!("USB controller IO base: 0x{:04X}", self.base_address as u16);
+    /// 포트 연결 상태 확인
+    pub unsafe fn check_port_connection(&self, port: u8) -> Result<bool, UsbError> {
+        match self {
+            GenericUsbHostController::Xhci(ctrl) => ctrl.check_port_connection(port),
+            GenericUsbHostController::Ehci(ctrl) => ctrl.check_port_connection(port),
+            GenericUsbHostController::Generic { initialized, .. } => {
+                if !*initialized {
+                    return Err(UsbError::NotInitialized);
+                }
+                Err(UsbError::NotImplemented)
+            }
         }
-        
-        Ok(self.base_address)
+    }
+    
+    /// 포트 리셋
+    pub unsafe fn reset_port(&self, port: u8) -> Result<(), UsbError> {
+        match self {
+            GenericUsbHostController::Xhci(ctrl) => ctrl.reset_port(port),
+            GenericUsbHostController::Ehci(ctrl) => ctrl.reset_port(port),
+            GenericUsbHostController::Generic { initialized, .. } => {
+                if !*initialized {
+                    return Err(UsbError::NotInitialized);
+                }
+                Err(UsbError::NotImplemented)
+            }
+        }
+    }
+    
+    /// 포트 수 가져오기
+    pub fn port_count(&self) -> u8 {
+        match self {
+            GenericUsbHostController::Xhci(ctrl) => ctrl.port_count(),
+            GenericUsbHostController::Ehci(ctrl) => ctrl.port_count(),
+            GenericUsbHostController::Generic { .. } => 0,
+        }
+    }
+    
+    /// USB 제어 요청 전송
+    ///
+    /// # Safety
+    /// 컨트롤러가 초기화되어 있어야 합니다.
+    pub unsafe fn send_control_request(
+        &mut self,
+        request: &crate::drivers::usb::request::UsbControlRequest,
+        data_buffer: *mut u8,
+        data_length: u16,
+    ) -> Result<(), UsbError> {
+        match self {
+            GenericUsbHostController::Xhci(ctrl) => {
+                ctrl.send_control_request(request, data_buffer, data_length)
+            }
+            GenericUsbHostController::Ehci(ctrl) => {
+                // EHCI는 아직 구현되지 않음
+                Err(UsbError::NotImplemented)
+            }
+            GenericUsbHostController::Generic { initialized, .. } => {
+                if !*initialized {
+                    return Err(UsbError::NotInitialized);
+                }
+                Err(UsbError::NotImplemented)
+            }
+        }
     }
 }
 
 impl UsbHostController for GenericUsbHostController {
     fn init(&mut self) -> Result<(), UsbError> {
-        unsafe {
-            // PCI 버스 마스터 활성화
-            let command = self.pci_device.read_config_register(0x04);
-            self.pci_device.write_config_register(0x04, command | 0x05); // Bus Master + Memory Space
-            
-            // 베이스 주소 읽기
-            self.read_base_address()?;
-            
-            // TODO: 실제 호스트 컨트롤러 초기화
-            // 각 컨트롤러 타입별로 구현 필요
-            crate::log_warn!("USB host controller initialization not yet fully implemented");
-            
-            self.initialized = true;
-            Ok(())
+        match self {
+            GenericUsbHostController::Xhci(ctrl) => ctrl.init(),
+            GenericUsbHostController::Ehci(ctrl) => ctrl.init(),
+            GenericUsbHostController::Generic { pci_device, controller_type, initialized, base_address } => {
+                unsafe {
+                    // PCI 버스 마스터 활성화
+                    let command = pci_device.read_config_register(0x04);
+                    pci_device.write_config_register(0x04, command | 0x05);
+                    
+                    // 베이스 주소 읽기
+                    let bar0 = pci_device.bar0;
+                    if (bar0 & 0x01) == 0 {
+                        *base_address = (bar0 & !0xF) as u64;
+                    } else {
+                        *base_address = (bar0 & !0x3) as u64;
+                    }
+                    
+                    crate::log_warn!("USB host controller {:?} initialization not yet fully implemented", controller_type);
+                    *initialized = true;
+                    Ok(())
+                }
+            }
         }
     }
     
     fn reset(&mut self) -> Result<(), UsbError> {
-        // TODO: 호스트 컨트롤러 리셋 구현
-        crate::log_warn!("USB host controller reset not yet implemented");
-        Ok(())
+        match self {
+            GenericUsbHostController::Xhci(ctrl) => ctrl.reset(),
+            GenericUsbHostController::Ehci(ctrl) => ctrl.reset(),
+            GenericUsbHostController::Generic { .. } => {
+                crate::log_warn!("USB host controller reset not yet implemented");
+                Ok(())
+            }
+        }
     }
     
     fn controller_type(&self) -> UsbHostControllerType {
-        self.controller_type
+        match self {
+            GenericUsbHostController::Xhci(ctrl) => ctrl.controller_type(),
+            GenericUsbHostController::Ehci(ctrl) => ctrl.controller_type(),
+            GenericUsbHostController::Generic { controller_type, .. } => *controller_type,
+        }
     }
     
     fn is_running(&self) -> bool {
-        self.initialized
+        match self {
+            GenericUsbHostController::Xhci(ctrl) => ctrl.is_running(),
+            GenericUsbHostController::Ehci(ctrl) => ctrl.is_running(),
+            GenericUsbHostController::Generic { initialized, .. } => *initialized,
+        }
     }
 }
 

@@ -19,6 +19,7 @@ pub mod stats;
 pub mod rapl;
 pub mod temps;
 pub mod cpu_usage;
+pub mod device_hooks;
 
 pub use manager::PowerManager;
 pub use policy::{PowerPolicy, PowerMode};
@@ -68,6 +69,16 @@ pub fn resume() -> Result<(), PowerError> {
     let mut pm = POWER_MANAGER.lock();
     if let Some(ref mut m) = *pm {
         m.resume()
+    } else {
+        Err(PowerError::NotInitialized)
+    }
+}
+
+/// 런타임 전력 모드 변경 (편의 래퍼)
+pub fn set_mode(mode: PowerMode) -> Result<(), PowerError> {
+    let mut pm = POWER_MANAGER.lock();
+    if let Some(ref mut m) = *pm {
+        m.set_policy(mode)
     } else {
         Err(PowerError::NotInitialized)
     }

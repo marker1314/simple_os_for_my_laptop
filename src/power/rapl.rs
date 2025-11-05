@@ -1,6 +1,13 @@
 //! Intel RAPL MSR reading (best-effort)
+//!
+//! Running Average Power Limit (RAPL) 인터페이스를 통해 CPU 전력 소비를 측정합니다.
+//!
+//! # 참고 자료
+//! - Intel 64 and IA-32 Architectures Software Developer's Manual
+//! - Volume 3B: System Programming Guide, Part 2
 
 use crate::power::PowerError;
+use spin::Mutex;
 
 const MSR_RAPL_POWER_UNIT: u32 = 0x606; // energy units in bits 8..12
 const MSR_PKG_ENERGY_STATUS: u32 = 0x611;

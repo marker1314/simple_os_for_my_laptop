@@ -8,17 +8,19 @@ pub enum Profile {
     Headless,
 }
 
+use spin::Mutex;
+
+// 기본 전력 모드를 저전력으로 설정
+static CURRENT_PROFILE: Mutex<Profile> = Mutex::new(Profile::PowerSaver);
+
 #[inline]
-pub const fn current_profile() -> Profile {
-    // Order of checks ensures exactly one wins based on enabled feature
-    #[cfg(feature = "power_saver")]
-    { return Profile::PowerSaver; }
-    #[cfg(feature = "performance")]
-    { return Profile::Performance; }
-    #[cfg(feature = "headless")]
-    { return Profile::Headless; }
-    // default
-    Profile::Balanced
+pub fn current_profile() -> Profile {
+    *CURRENT_PROFILE.lock()
+}
+
+#[inline]
+pub fn set_current_profile(p: Profile) {
+    *CURRENT_PROFILE.lock() = p;
 }
 
 

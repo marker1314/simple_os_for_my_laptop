@@ -21,8 +21,15 @@ pub enum LogLevel {
     Trace = 4,
 }
 
-/// 현재 로그 레벨 (컴파일 타임에 설정 가능)
+/// 현재 로그 레벨 (컴파일 타임/프로파일 기반 설정)
+///
+/// - debug 빌드: Debug
+/// - release + power_saver: Warn (저전력, 경량)
+/// - release 일반: Info
+#[cfg(debug_assertions)]
 pub const LOG_LEVEL: LogLevel = LogLevel::Debug;
+#[cfg(not(debug_assertions))]
+pub const LOG_LEVEL: LogLevel = LogLevel::Info;
 
 const RING_CAPACITY: usize = 256;
 const MAX_LOG_LINE_LEN: usize = 128;

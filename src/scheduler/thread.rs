@@ -107,6 +107,37 @@ impl Default for ThreadContext {
 /// 스레드 구조체
 ///
 /// 각 스레드는 고유한 ID, 상태, 컨텍스트를 가집니다.
+/// 스레드 우선순위
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ThreadPriority {
+    /// 낮은 우선순위 (0)
+    Low = 0,
+    /// 보통 우선순위 (1)
+    Normal = 1,
+    /// 높은 우선순위 (2)
+    High = 2,
+    /// 실시간 우선순위 (3)
+    Realtime = 3,
+}
+
+impl ThreadPriority {
+    /// 우선순위를 u8로 변환
+    pub fn to_u8(&self) -> u8 {
+        *self as u8
+    }
+    
+    /// u8에서 우선순위 생성
+    pub fn from_u8(value: u8) -> Self {
+        match value {
+            0 => ThreadPriority::Low,
+            1 => ThreadPriority::Normal,
+            2 => ThreadPriority::High,
+            3 => ThreadPriority::Realtime,
+            _ => ThreadPriority::Normal, // 기본값
+        }
+    }
+}
+
 pub struct Thread {
     /// 스레드 ID
     pub id: u64,
@@ -116,6 +147,8 @@ pub struct Thread {
     pub context: ThreadContext,
     /// 스레드 이름 (디버깅용)
     pub name: &'static str,
+    /// 스레드 우선순위
+    pub priority: ThreadPriority,
     /// 스택 시작 주소 (낮은 주소)
     pub stack_start: Option<u64>,
     /// 스택 크기 (바이트)
@@ -124,6 +157,8 @@ pub struct Thread {
     allocated_frames: alloc::vec::Vec<x86_64::structures::paging::PhysFrame<x86_64::structures::paging::Size4KiB>>,
     /// 동적 스택 할당 여부
     dynamic_stack: bool,
+    /// 스택 카나리 값 (스택 오버플로우 보호)
+    stack_canary: Option<crate::memory::stack_canary::StackCanary>,
 }
 
 impl Thread {
@@ -135,24 +170,49 @@ impl Thread {
     /// * `entry_point` - 스레드 진입점 주소
     /// * `stack_pointer` - 스레드 스택 포인터
     pub fn new(id: u64, name: &'static str, entry_point: u64, stack_pointer: u64) -> Self {
+        Self::new_with_priority(id, name, entry_point, stack_pointer, ThreadPriority::Normal)
+    }
+    
+    /// 우선순위를 지정하여 새로운 스레드 생성
+    ///
+    /// # Arguments
+    /// * `id` - 스레드 ID
+    /// * `name` - 스레드 이름
+    /// * `entry_point` - 스레드 진입점 주소
+    /// * `stack_pointer` - 스레드 스택 포인터
+    /// * `priority` - 스레드 우선순위
+    pub fn new_with_priority(id: u64, name: &'static str, entry_point: u64, stack_pointer: u64, priority: ThreadPriority) -> Self {
         // 스택 크기 계산 (기본 8KB)
         const DEFAULT_STACK_SIZE: usize = 8 * 1024;
         let stack_start = stack_pointer.saturating_sub(DEFAULT_STACK_SIZE as u64);
+        
+        // 스택 카나리 설정
+        let canary = unsafe {
+            use x86_64::VirtAddr;
+            crate::memory::stack_canary::set_stack_canary(VirtAddr::new(stack_pointer))
+        };
         
         Self {
             id,
             state: ThreadState::Ready,
             context: ThreadContext::new_with_stack(entry_point, stack_pointer),
             name,
+            priority,
             stack_start: Some(stack_start),
             stack_size: DEFAULT_STACK_SIZE,
             allocated_frames: alloc::vec::Vec::new(),
             dynamic_stack: false, // 정적 스택
+            stack_canary: canary,
         }
     }
     
     /// 스택 정보로 스레드 생성
     pub fn new_with_stack(id: u64, name: &'static str, entry_point: u64, stack_start: u64, stack_size: usize) -> Self {
+        Self::new_with_stack_and_priority(id, name, entry_point, stack_start, stack_size, ThreadPriority::Normal)
+    }
+    
+    /// 스택 정보와 우선순위로 스레드 생성
+    pub fn new_with_stack_and_priority(id: u64, name: &'static str, entry_point: u64, stack_start: u64, stack_size: usize, priority: ThreadPriority) -> Self {
         let stack_pointer = stack_start + stack_size as u64;
         
         // Guard page 자동 생성
@@ -162,15 +222,23 @@ impl Thread {
             }
         }
         
+        // 스택 카나리 설정
+        let canary = unsafe {
+            use x86_64::VirtAddr;
+            crate::memory::stack_canary::set_stack_canary(VirtAddr::new(stack_pointer))
+        };
+        
         Self {
             id,
             state: ThreadState::Ready,
             context: ThreadContext::new_with_stack(entry_point, stack_pointer),
             name,
+            priority,
             stack_start: Some(stack_start),
             stack_size,
             allocated_frames: alloc::vec::Vec::new(),
             dynamic_stack: false, // 기본값: 정적 스택
+            stack_canary: canary,
         }
     }
     
@@ -219,6 +287,12 @@ impl Thread {
             crate::log_warn!("Failed to create guard pages for thread {}: {}", id, e);
         }
         
+        // 스택 카나리 설정
+        let canary = unsafe {
+            use x86_64::VirtAddr;
+            crate::memory::stack_canary::set_stack_canary(VirtAddr::new(stack_pointer))
+        };
+        
         Some(Self {
             id,
             state: ThreadState::Ready,
@@ -228,6 +302,7 @@ impl Thread {
             stack_size,
             allocated_frames,
             dynamic_stack: true,
+            stack_canary: canary,
         })
     }
     
@@ -254,6 +329,27 @@ impl Thread {
     /// 스레드 상태를 Terminated로 변경
     pub fn set_terminated(&mut self) {
         self.state = ThreadState::Terminated;
+    }
+    
+    /// 스택 카나리 검증
+    /// 
+    /// 컨텍스트 스위칭 전에 호출하여 스택 오버플로우를 감지합니다.
+    /// 
+    /// # Returns
+    /// 카나리가 유효하면 Ok(()), 손상되었으면 Err
+    pub fn verify_canary(&self) -> Result<(), &'static str> {
+        if let Some(ref canary) = self.stack_canary {
+            let stack_pointer = self.context.rsp;
+            unsafe {
+                use x86_64::VirtAddr;
+                crate::memory::stack_canary::verify_stack_canary(
+                    VirtAddr::new(stack_pointer),
+                    canary
+                )
+            }
+        } else {
+            Ok(()) // 카나리가 없으면 검증 스킵
+        }
     }
     
     /// 스레드 리소스 정리

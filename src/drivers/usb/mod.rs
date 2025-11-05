@@ -25,6 +25,9 @@ pub mod error;
 pub mod device;
 pub mod descriptor;
 pub mod request;
+pub mod xhci;
+pub mod xhci_trb;
+pub mod ehci;
 
 pub use host_controller::{UsbHostController, UsbHostControllerType};
 pub use error::UsbError;

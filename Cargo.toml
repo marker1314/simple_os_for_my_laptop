@@ -18,10 +18,7 @@ uart_16550 = "0.2"
 linked_list_allocator = "0.10"
 
 [features]
-# Boot profiles
-balanced = []
-power_saver = []
-performance = []
+# Boot profiles (runtime-controlled now). Keep only headless for optional UI-less builds.
 headless = []
 
 # Subsystem gates
@@ -31,9 +28,10 @@ gui = []
 touchpad = []
 smp = []
 usb = []
+audio = []
 
-# Default to balanced and enable all subsystems for current behavior
-default = ["balanced", "net", "fs", "gui", "touchpad", "smp"]
+# Default enable common subsystems; audio/usb are opt-in for footprint/power
+default = ["net", "fs", "gui", "touchpad", "smp"]
 
 [profile.dev]
 panic = "abort"

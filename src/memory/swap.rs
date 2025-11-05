@@ -27,8 +27,14 @@ struct SwapEntry {
     slot: u32,
     /// 원래의 가상 주소
     virtual_address: VirtAddr,
-    /// 스왑 아웃 시간 (타이머 틱)
+    /// 스왑 아웃 시간 (밀리초)
     swap_time: u64,
+    /// 마지막 접근 시간 (스왑 인 시 업데이트)
+    last_access_time: u64,
+    /// 접근 횟수 (프리페칭 우선순위 결정)
+    access_count: u32,
+    /// 압축 여부
+    compressed: bool,
 }
 
 /// 스왑 관리자
@@ -50,6 +56,10 @@ pub struct SwapManager {
     swap_device: Option<&'static dyn BlockDevice>,
     /// 스왑 영역 시작 블록
     swap_start_block: u64,
+    /// 프리페칭 활성화 여부
+    prefetch_enabled: bool,
+    /// 프리페칭된 페이지 수
+    prefetched_pages: usize,
 }
 
 impl SwapManager {
@@ -65,6 +75,8 @@ impl SwapManager {
             enabled: false,
             swap_device: None,
             swap_start_block: 0,
+            prefetch_enabled: true,
+            prefetched_pages: 0,
         }
     }
     
@@ -123,19 +135,16 @@ impl SwapManager {
         let page_data = self.read_page_data(frame)?;
         
         // 메모리 압축 시도 (스왑 전)
-        let data_to_swap = if let Some(saved_bytes) = crate::memory::compression::try_compress_page(
+        // 압축은 메모리 압축 모듈에서 처리되므로, 여기서는 원본 데이터를 스왑
+        let data_to_swap = page_data;
+        
+        // 압축 시도 (통계용)
+        if let Some(saved_bytes) = crate::memory::compression::try_compress_page(
             page.start_address(),
             &page_data
         ) {
             crate::log_debug!("Compressed page before swap: saved {} bytes", saved_bytes);
-            // 압축된 페이지는 메모리에 저장되고, 압축되지 않은 데이터는 스왑
-            // 실제로는 압축된 데이터를 스왑하는 것이 더 효율적이지만,
-            // 복원 시 복잡도가 증가하므로 현재는 원본 데이터를 스왑
-            page_data
-        } else {
-            // 압축 효과가 없으면 원본 데이터 사용
-            page_data
-        };
+        }
         
         // 디스크에 쓰기
         let device = self.swap_device.ok_or(SwapError::NotInitialized)?;
@@ -157,10 +166,14 @@ impl SwapManager {
         }
         
         // 스왑 엔트리 저장
+        let now = crate::drivers::timer::get_milliseconds();
         let entry = SwapEntry {
             slot,
             virtual_address: page.start_address(),
-            swap_time: crate::drivers::timer::get_milliseconds(),
+            swap_time: now,
+            last_access_time: now,
+            access_count: 0,
+            compressed: false, // 압축은 스왑 인 시 확인
         };
         
         self.swap_map.insert(page.start_address().as_u64(), entry);
@@ -206,15 +219,23 @@ impl SwapManager {
             }
         }
         
-        crate::log_info!("Swapped in page {:#016x} from slot {}", 
-                        page.start_address().as_u64(), entry.slot);
+        let now = crate::drivers::timer::get_milliseconds();
+        crate::log_info!("Swapped in page {:#016x} from slot {} (access after {}ms)", 
+                        page.start_address().as_u64(), entry.slot, now - entry.swap_time);
         
-        // 스왑 엔트리 제거
+        // 접근 통계 업데이트
+        if let Some(entry) = self.swap_map.get_mut(&addr) {
+            entry.last_access_time = now;
+            entry.access_count += 1;
+        }
+        
+        // 스왑 엔트리 제거 (실제로는 유지하여 프리페칭에 사용 가능)
+        // 하지만 메모리 절약을 위해 제거
         self.swap_map.remove(&addr);
         self.swapped_pages -= 1;
         self.swap_in_count += 1;
         
-        Ok(final_page_data)
+        Ok(page_data)
     }
     
     /// 페이지가 스왑되어 있는지 확인
@@ -274,6 +295,145 @@ impl SwapManager {
         
         Ok(())
     }
+    
+    /// LRU 기반 스왑 아웃 대상 선택 (개선된 버전)
+    /// 
+    /// 접근 빈도와 시간을 고려하여 스왑 대상 페이지를 선택합니다.
+    /// 
+    /// 주의: 이 함수는 이미 스왑된 페이지를 대상으로 하지 않습니다.
+    /// 실제 메모리에 있는 페이지를 찾으려면 다른 메커니즘이 필요합니다.
+    pub fn select_lru_page(&self) -> Option<Page<Size4KiB>> {
+        // 스왑된 페이지 중 가장 오래된 것 선택
+        // 실제로는 메모리에 있는 페이지를 찾아야 함
+        // 현재는 스왑 엔트리만 확인
+        
+        let mut oldest_entry: Option<SwapEntry> = None;
+        let mut oldest_time = u64::MAX;
+        
+        for (_, &entry) in self.swap_map.iter() {
+            if entry.swap_time < oldest_time {
+                oldest_time = entry.swap_time;
+                oldest_entry = Some(entry);
+            }
+        }
+        
+        oldest_entry.map(|entry| {
+            Page::<Size4KiB>::containing_address(entry.virtual_address)
+        })
+    }
+    
+    /// 메모리에 있는 페이지 중 LRU 페이지 찾기
+    /// 
+    /// 실제 메모리에 매핑된 페이지 중 가장 오래된 것을 찾습니다.
+    /// 이는 페이지 테이블을 스캔해야 하므로 더 복잡합니다.
+    pub fn find_memory_lru_page(&self) -> Option<Page<Size4KiB>> {
+        // TODO: 페이지 테이블 스캔하여 메모리에 있는 페이지 찾기
+        // 현재는 기본 구현만
+        None
+    }
+    
+    /// 스왑 프리페칭
+    /// 
+    /// 자주 접근되는 페이지를 미리 메모리로 불러옵니다.
+    /// 
+    /// # Arguments
+    /// * `max_pages` - 최대 프리페칭할 페이지 수
+    /// 
+    /// # Safety
+    /// 메모리 관리가 초기화되어 있어야 합니다.
+    pub unsafe fn prefetch_pages(&mut self, max_pages: usize) -> Result<usize, SwapError> {
+        if !self.enabled || !self.prefetch_enabled {
+            return Ok(0);
+        }
+        
+        // 접근 횟수가 높은 페이지 우선 선택 (최근 접근 시간 기준)
+        let mut candidates: Vec<(u64, SwapEntry)> = self.swap_map.iter()
+            .map(|(&addr, &entry)| (addr, entry))
+            .collect();
+        
+        // 접근 횟수와 최근 접근 시간 기준 정렬
+        candidates.sort_by(|a, b| {
+            // 접근 횟수가 높을수록 우선
+            let count_cmp = b.1.access_count.cmp(&a.1.access_count);
+            if count_cmp != core::cmp::Ordering::Equal {
+                return count_cmp;
+            }
+            // 최근 접근 시간 기준 (최근일수록 우선)
+            a.1.last_access_time.cmp(&b.1.last_access_time)
+        });
+        
+        let mut prefetched = 0;
+        for (addr, entry) in candidates.iter().take(max_pages) {
+            let page = Page::<Size4KiB>::containing_address(VirtAddr::new(*addr));
+            
+            // 프리페칭: 페이지를 메모리로 미리 불러오기
+            if let Ok(_) = self.try_prefetch_page(page, *entry) {
+                prefetched += 1;
+                self.prefetched_pages += 1;
+            }
+        }
+        
+        if prefetched > 0 {
+            crate::log_debug!("Prefetched {} pages from swap", prefetched);
+        }
+        
+        Ok(prefetched)
+    }
+    
+    /// 단일 페이지 프리페칭 시도
+    unsafe fn try_prefetch_page(&mut self, page: Page<Size4KiB>, mut entry: SwapEntry) -> Result<(), SwapError> {
+        // 메모리 압박 상황 확인
+        if let Some((allocated, deallocated)) = crate::memory::frame::get_frame_stats() {
+            // 메모리가 부족하면 프리페칭 스킵
+            if allocated > deallocated + 100 {
+                return Err(SwapError::IoError);
+            }
+        }
+        
+        // 프레임 할당 시도
+        if let Some(frame) = crate::memory::frame::allocate_frame() {
+            // 스왑에서 페이지 읽기
+            let page_data = self.swap_in(page)?;
+            
+            // 프레임에 데이터 쓰기
+            self.write_page_data(frame, &page_data)?;
+            
+            // 페이지 매핑
+            if let Err(e) = crate::memory::paging::map_swap_page_at(page.start_address(), frame) {
+                crate::log_warn!("Failed to map prefetched page: {:?}", e);
+                crate::memory::frame::deallocate_frame(frame);
+                return Err(SwapError::IoError);
+            }
+            
+            // 접근 시간 업데이트
+            entry.last_access_time = crate::drivers::timer::get_milliseconds();
+            entry.access_count += 1;
+            self.swap_map.insert(page.start_address().as_u64(), entry);
+            
+            Ok(())
+        } else {
+            Err(SwapError::IoError)
+        }
+    }
+    
+    /// 압축된 페이지 스왑 아웃 (향후 구현)
+    /// 
+    /// 페이지를 압축하여 스왑 공간을 절약합니다.
+    /// 현재는 기본 구조만 제공합니다.
+    unsafe fn swap_out_compressed(&mut self, page: Page<Size4KiB>, frame: PhysFrame<Size4KiB>) -> Result<u32, SwapError> {
+        // 기본 스왑 아웃 사용 (압축은 별도로 처리)
+        self.swap_out(page, frame)
+    }
+    
+    /// 프리페칭 활성화/비활성화
+    pub fn set_prefetch_enabled(&mut self, enabled: bool) {
+        self.prefetch_enabled = enabled;
+    }
+    
+    /// 프리페칭 활성화 여부 확인
+    pub fn is_prefetch_enabled(&self) -> bool {
+        self.prefetch_enabled
+    }
 }
 
 /// 스왑 통계
@@ -332,5 +492,53 @@ pub fn is_swap_enabled() -> bool {
 pub fn get_swap_stats() -> SwapStats {
     let manager = SWAP_MANAGER.lock();
     manager.stats()
+}
+
+/// LRU 페이지를 스왑 아웃 시도
+/// 
+/// 메모리 압박 시 가장 오래된 페이지를 스왑 아웃합니다.
+/// 
+/// # Safety
+/// 메모리 관리가 초기화되어 있어야 합니다.
+pub unsafe fn try_swap_out_lru() -> Result<(), SwapError> {
+    let mut manager = SWAP_MANAGER.lock();
+    
+    if !manager.enabled {
+        return Err(SwapError::NotEnabled);
+    }
+    
+    // LRU 페이지 선택
+    if let Some(page) = manager.select_lru_page() {
+        // 페이지의 프레임 찾기
+        use crate::memory::paging;
+        let offset = {
+            let guard = paging::PHYSICAL_MEMORY_OFFSET.lock();
+            guard.ok_or(SwapError::NotInitialized)?
+        };
+        
+        let mut mapper = paging::init_mapper(offset);
+        
+        // 페이지가 매핑되어 있는지 확인
+        if let Ok(frame) = mapper.translate_page(page) {
+            // 스왑 아웃
+            manager.swap_out(page, frame)?;
+            Ok(())
+        } else {
+            Err(SwapError::PageNotSwapped)
+        }
+    } else {
+        Err(SwapError::SwapFull) // 스왑할 페이지 없음
+    }
+}
+
+/// 스왑 프리페칭 실행
+/// 
+/// 유휴 시간에 자주 접근되는 페이지를 미리 불러옵니다.
+/// 
+/// # Safety
+/// 메모리 관리가 초기화되어 있어야 합니다.
+pub unsafe fn prefetch_swap_pages(max_pages: usize) -> Result<usize, SwapError> {
+    let mut manager = SWAP_MANAGER.lock();
+    manager.prefetch_pages(max_pages)
 }
 

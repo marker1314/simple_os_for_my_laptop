@@ -15,6 +15,8 @@ pub mod frame_cache;
 pub mod compression;
 pub mod fragmentation;
 pub mod oom_killer;
+pub mod stack_canary;
+pub mod leak_detector;
 
 pub use map::{init as init_memory_map, get as get_memory_map, MemoryMap, MemoryType, ParsedMemoryRegion};
 pub use frame::{init as init_frame_allocator, allocate_frame};
@@ -59,6 +61,9 @@ pub unsafe fn init(boot_info: &'static BootInfo) -> Result<(), MapToError<Size4K
     
     // 4. 페이지 테이블 정보 출력 (디버깅)
     paging::print_page_table_info();
+    
+    // 5. 메모리 누수 감지기 초기화
+    leak_detector::init();
     
     Ok(())
 }

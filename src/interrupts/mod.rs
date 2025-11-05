@@ -4,6 +4,7 @@
 
 pub mod idt;
 pub mod pic;
+pub mod exception_recovery;
 
 pub use idt::{init as init_idt, enable_interrupts, disable_interrupts};
 pub use pic::{init as init_pic, PIC1_OFFSET, PIC2_OFFSET, set_mask, end_of_interrupt};

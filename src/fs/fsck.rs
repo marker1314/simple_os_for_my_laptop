@@ -110,7 +110,8 @@ impl Fsck {
     /// 저널 복구 (비정상 종료 감지 및 재생)
     fn recover_journal(&mut self, fs: &mut Fat32FileSystem) -> FsResult<()> {
         // 저널에서 복구 가능한 엔트리 가져오기
-        match recover() {
+        // TODO: 실제 디바이스와 저널 시작 블록을 전달해야 함
+        match super::journal::recover(None, None) {
             Ok(entries) => {
                 if !entries.is_empty() {
                     self.result.add_error(); // 비정상 종료 감지
@@ -118,7 +119,7 @@ impl Fsck {
                     
                     if self.repair {
                         // 저널 엔트리를 재생
-                        for entry in entries {
+                        for entry in &entries {
                             // 실제로는 디스크에 쓰기 필요
                             // 여기서는 로그만 남김
                             crate::log_info!("Replaying journal entry: block={}, type={:?}", 

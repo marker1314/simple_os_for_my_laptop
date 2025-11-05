@@ -60,6 +60,9 @@ pub mod config;
 pub mod crash;
 pub mod kernel;
 pub mod monitoring;
+pub mod safety;
+#[cfg(feature = "fs")]
+pub mod security;
 
 // 매크로는 자동으로 crate 루트에 사용 가능하므로 재export 불필요
 // 사용: simple_os::serial_println!() 또는 simple_os::log_info!()

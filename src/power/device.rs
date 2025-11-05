@@ -227,6 +227,9 @@ pub fn quiesce_all_devices() -> Result<(), PowerError> {
     
     // 입력 장치 인터럽트 비활성화
     power_off_input()?;
+
+    // 등록된 서스펜드 훅 실행(베스트 에포트)
+    let _ = crate::power::device_hooks::run_suspend_hooks();
     
     crate::log_info!("All devices quiesced");
     Ok(())
@@ -250,6 +253,9 @@ pub fn resume_all_devices() -> Result<(), PowerError> {
     
     // 장치 상태 복원
     restore_device_state()?;
+
+    // 등록된 리줌 훅 실행(베스트 에포트)
+    let _ = crate::power::device_hooks::run_resume_hooks();
     
     crate::log_info!("All devices resumed");
     Ok(())

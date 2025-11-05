@@ -202,45 +202,140 @@ pub unsafe fn promote_cow_page(addr: VirtAddr) -> Result<(), MapToError<Size4KiB
     Ok(())
 }
 
+/// 페이지 테이블 엔트리 타입 (64비트)
+type PageTableEntry = u64;
+
+/// NX 비트 마스크 (63번 비트)
+const NX_BIT_MASK: u64 = 1 << 63;
+
+/// 페이지 테이블 엔트리 포인터 얻기
+/// 
+/// 가상 주소에 해당하는 페이지 테이블 엔트리에 직접 접근합니다.
+/// 
+/// # Safety
+/// - `physical_memory_offset`는 유효한 물리 메모리 오프셋이어야 합니다
+/// - 페이지가 이미 매핑되어 있어야 합니다
+unsafe fn get_page_table_entry_ptr(
+    page: Page<Size4KiB>,
+    physical_memory_offset: VirtAddr,
+) -> Option<*mut PageTableEntry> {
+    use x86_64::registers::control::Cr3;
+    use x86_64::structures::paging::{PageTable, PhysFrame};
+    
+    let addr = page.start_address().as_u64();
+    
+    // 주소에서 인덱스 추출 (x86_64 4단계 페이징)
+    let p4_index = (addr >> 39) & 0x1FF;
+    let p3_index = (addr >> 30) & 0x1FF;
+    let p2_index = (addr >> 21) & 0x1FF;
+    let p1_index = (addr >> 12) & 0x1FF;
+    
+    // P4 테이블 가져오기
+    let (level_4_table_frame, _) = Cr3::read();
+    let p4_phys = level_4_table_frame.start_address();
+    let p4_virt = physical_memory_offset + p4_phys.as_u64();
+    let p4_table: *mut PageTable = p4_virt.as_mut_ptr();
+    
+    // P4 엔트리 확인
+    let p4_entry = (*p4_table)[p4_index as usize];
+    if !p4_entry.flags().contains(PageTableFlags::PRESENT) {
+        return None;
+    }
+    
+    // P3 테이블 가져오기
+    let p3_frame = PhysFrame::containing_address(x86_64::PhysAddr::new(p4_entry.addr().as_u64()));
+    let p3_phys = p3_frame.start_address();
+    let p3_virt = physical_memory_offset + p3_phys.as_u64();
+    let p3_table: *mut PageTable = p3_virt.as_mut_ptr();
+    
+    // P3 엔트리 확인
+    let p3_entry = (*p3_table)[p3_index as usize];
+    if !p3_entry.flags().contains(PageTableFlags::PRESENT) {
+        return None;
+    }
+    
+    // P2 테이블 가져오기
+    let p2_frame = PhysFrame::containing_address(x86_64::PhysAddr::new(p3_entry.addr().as_u64()));
+    let p2_phys = p2_frame.start_address();
+    let p2_virt = physical_memory_offset + p2_phys.as_u64();
+    let p2_table: *mut PageTable = p2_virt.as_mut_ptr();
+    
+    // P2 엔트리 확인
+    let p2_entry = (*p2_table)[p2_index as usize];
+    if !p2_entry.flags().contains(PageTableFlags::PRESENT) {
+        return None;
+    }
+    
+    // P1 테이블 가져오기 (최종 페이지 테이블)
+    let p1_frame = PhysFrame::containing_address(x86_64::PhysAddr::new(p2_entry.addr().as_u64()));
+    let p1_phys = p1_frame.start_address();
+    let p1_virt = physical_memory_offset + p1_phys.as_u64();
+    let p1_table: *mut PageTable = p1_virt.as_mut_ptr();
+    
+    // P1 엔트리 포인터 반환
+    Some((*p1_table).0.as_mut_ptr().add(p1_index as usize))
+}
+
 /// NX (No Execute) 비트 설정
 /// 
 /// 페이지를 실행 불가능하게 설정하여 코드 실행 공격을 방지합니다.
+/// 
+/// # Safety
+/// 페이지가 이미 매핑되어 있어야 합니다.
 pub unsafe fn set_nx_bit(page: Page<Size4KiB>, enabled: bool) -> Result<(), MapToError<Size4KiB>> {
     let offset = {
         let guard = PHYSICAL_MEMORY_OFFSET.lock();
         guard.ok_or(MapToError::FrameAllocationFailed)?
     };
 
-    let mut mapper = init_mapper(offset);
-    
-    // 현재 페이지 매핑 정보 가져오기
-    let frame = mapper.translate_page(page)
+    // 페이지 테이블 엔트리 포인터 가져오기
+    let entry_ptr = get_page_table_entry_ptr(page, offset)
         .ok_or(MapToError::FrameAllocationFailed)?;
     
-    // 페이지 언맵
-    mapper.unmap(page)?.1.flush();
+    // 현재 엔트리 읽기
+    let mut entry = core::ptr::read(entry_ptr);
     
-    // NX 비트 설정하여 재매핑
-    // x86_64에서 NX 비트는 페이지 테이블 엔트리의 63번 비트입니다
-    // x86_64 crate의 PageTableFlags는 NX 비트를 직접 지원하지 않으므로,
-    // 페이지 테이블 엔트리를 직접 수정해야 합니다.
-    
-    let mut frame_allocator = BootInfoFrameAllocator::new();
-    let mut flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
-    
-    // 페이지 매핑 후 NX 비트 설정
-    mapper.map_to(page, frame, flags, &mut frame_allocator)?.flush();
-    
-    // NX 비트 설정 (페이지 테이블 엔트리 직접 수정)
+    // NX 비트 설정/해제 (63번 비트)
     if enabled {
-        // 페이지 테이블 엔트리에 직접 접근하여 63번 비트 설정
-        // 이는 x86_64 crate의 제한으로 인해 low-level 접근 필요
-        // 현재는 플래그로만 제어 (실제 구현은 향후 완성)
-        crate::log_debug!("NX bit set for page {:#016x} (implementation pending direct page table access)", 
-                        page.start_address().as_u64());
+        entry |= NX_BIT_MASK;
+    } else {
+        entry &= !NX_BIT_MASK;
     }
     
+    // 엔트리 쓰기
+    core::ptr::write(entry_ptr, entry);
+    
+    // TLB 플러시 (변경 사항 반영)
+    use x86_64::instructions::tlb;
+    tlb::flush(page.start_address());
+    
+    crate::log_debug!("NX bit {} for page {:#016x}", 
+                    if enabled { "enabled" } else { "disabled" },
+                        page.start_address().as_u64());
+    
     Ok(())
+}
+
+/// NX 비트 확인
+/// 
+/// 페이지의 NX 비트 상태를 확인합니다.
+pub fn is_nx_bit_set(page: Page<Size4KiB>) -> bool {
+    let offset = {
+        let guard = PHYSICAL_MEMORY_OFFSET.lock();
+        match *guard {
+            Some(off) => off,
+            None => return false,
+        }
+    };
+
+    unsafe {
+        if let Some(entry_ptr) = get_page_table_entry_ptr(page, offset) {
+            let entry = core::ptr::read(entry_ptr);
+            (entry & NX_BIT_MASK) != 0
+        } else {
+            false
+        }
+    }
 }
 
 /// ASLR (Address Space Layout Randomization) 활성화

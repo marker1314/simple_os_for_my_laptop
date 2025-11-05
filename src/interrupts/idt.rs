@@ -116,7 +116,7 @@ extern "x86-interrupt" fn device_not_available_handler(stack_frame: InterruptSta
 /// 예외 핸들러: Double Fault (0x08)
 /// 
 /// Double Fault는 스택 오버플로우나 다른 예외 처리 중 발생한 예외입니다.
-/// 안전한 크래시 덤프를 생성하고 시스템을 종료합니다.
+/// 복구를 시도하고, 불가능한 경우 안전하게 종료합니다.
 extern "x86-interrupt" fn double_fault_handler(stack_frame: InterruptStackFrame, error_code: u64) -> ! {
     log_error!("=== Double Fault Exception ===");
     log_error!("Error Code: {:#016x}", error_code);
@@ -130,15 +130,29 @@ extern "x86-interrupt" fn double_fault_handler(stack_frame: InterruptStackFrame,
     }
     log_error!("Current RSP: {:#016x}", current_rsp);
     
-    // 크래시 덤프 기록
-    crate::crash::record_exception(stack_frame.instruction_pointer.as_u64(), 0x08);
+    // 복구 시도
+    use crate::interrupts::exception_recovery;
+    let recovery_result = unsafe {
+        exception_recovery::try_recover_double_fault(&stack_frame, error_code)
+    };
     
-    // 크래시 덤프 출력
-    if let Some(dump) = crate::crash::take() {
-        crate::crash::print_crash_dump(&dump);
+    match recovery_result {
+        exception_recovery::RecoveryResult::Recovered => {
+            log_info!("Double Fault: Recovery attempted, but Double Fault is usually unrecoverable");
+            // Double Fault는 복구 불가능하므로 여기서는 도달하지 않음
+        }
+        exception_recovery::RecoveryResult::Unrecoverable | exception_recovery::RecoveryResult::CannotRecover => {
+            // 크래시 덤프 기록
+            crate::crash::record_exception(stack_frame.instruction_pointer.as_u64(), 0x08);
+            
+            // 크래시 덤프 출력
+            if let Some(dump) = crate::crash::take() {
+                crate::crash::print_crash_dump(&dump);
+            }
+            
+            log_error!("Double Fault is unrecoverable. System halted.");
+        }
     }
-    
-    log_error!("Double Fault is unrecoverable. System halted.");
     
     // 안전하게 시스템 종료
     loop {
@@ -178,6 +192,26 @@ extern "x86-interrupt" fn general_protection_fault_handler(stack_frame: Interrup
     log_error!("Error Code: {:#016x}", error_code);
     log_error!("RIP: {:#016x}", stack_frame.instruction_pointer.as_u64());
     log_error!("Stack Frame: {:#?}", stack_frame);
+    
+    // 복구 시도
+    use crate::interrupts::exception_recovery;
+    let recovery_result = unsafe {
+        exception_recovery::try_recover_gpf(&stack_frame, error_code)
+    };
+    
+    match recovery_result {
+        exception_recovery::RecoveryResult::Recovered => {
+            log_info!("GPF: Recovery successful, continuing execution");
+            // 복구 성공, 실행 계속
+            return;
+        }
+        exception_recovery::RecoveryResult::Unrecoverable => {
+            log_error!("GPF: Recovery failed, system will halt");
+        }
+        exception_recovery::RecoveryResult::CannotRecover => {
+            log_error!("GPF: Cannot recover, system will halt");
+        }
+    }
     
     // Error code 분석
     // Bit 0: External event

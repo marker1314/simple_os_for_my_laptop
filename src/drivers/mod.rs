@@ -18,4 +18,6 @@ pub mod i2c_hid;
 pub mod touchpad;
 #[cfg(feature = "usb")]
 pub mod usb;
+#[cfg(feature = "audio")]
+pub mod audio;
 

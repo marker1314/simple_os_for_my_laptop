@@ -5,6 +5,7 @@
 pub mod apic;
 pub mod cpu;
 pub mod ipi;
+mod ap_boot;
 
 use alloc::vec::Vec;
 use spin::Mutex;
@@ -41,11 +42,23 @@ pub unsafe fn init() -> Result<(), &'static str> {
     let cpu_count = detect_cpu_count();
     crate::log_info!("Detected {} CPU(s)", cpu_count);
     
-    // 5. AP 초기화 (추가 CPU가 있는 경우)
+    // 5. AP 부트 코드 준비
+    ap_boot::prepare_ap_boot_code()?;
+    
+    // 6. AP 초기화 (추가 CPU가 있는 경우)
     if cpu_count > 1 {
         crate::log_info!("Starting {} Application Processor(s)...", cpu_count - 1);
-        // TODO: AP 초기화 코드 (IPI를 통한 INIT-SIPI-SIPI 시퀀스)
-        // 현재는 기본 구조만 구현
+        
+        // ACPI MADT에서 APIC ID 목록 읽기 (간단한 구현)
+        let ap_apic_ids = detect_ap_apic_ids(cpu_count);
+        
+        for apic_id in ap_apic_ids {
+            if let Err(e) = init_application_processor(apic_id) {
+                crate::log_warn!("Failed to initialize AP with APIC ID {}: {}", apic_id, e);
+            } else {
+                crate::log_info!("AP with APIC ID {} initialized successfully", apic_id);
+            }
+        }
     }
     
     *CPU_COUNT.lock() = cpu_count;
@@ -58,8 +71,166 @@ pub unsafe fn init() -> Result<(), &'static str> {
 /// ACPI 테이블에서 CPU 수를 읽습니다.
 fn detect_cpu_count() -> usize {
     // TODO: ACPI MADT (Multiple APIC Description Table)에서 CPU 수 읽기
-    // 현재는 기본값 1 반환
-    1
+    // 현재는 CPUID를 통해 논리 프로세서 수 확인
+    unsafe {
+        let mut eax: u32 = 0;
+        let mut ebx: u32 = 0;
+        let mut ecx: u32 = 0;
+        let mut edx: u32 = 0;
+        
+        // CPUID leaf 0x1 (Feature Information)
+        core::arch::asm!(
+            "cpuid",
+            in("eax") 0x1u32,
+            out("eax") eax,
+            out("ebx") ebx,
+            out("ecx") ecx,
+            out("edx") edx,
+            options(nostack, preserves_flags)
+        );
+        
+        // CPUID leaf 0xB (Extended Topology Enumeration)
+        // 논리 프로세서 수 확인 시도
+        let mut max_leaf: u32 = 0;
+        core::arch::asm!(
+            "cpuid",
+            in("eax") 0x0u32,
+            out("eax") max_leaf,
+            options(nostack, preserves_flags)
+        );
+        
+        if max_leaf >= 0xB {
+            // Extended Topology Enumeration 사용
+            core::arch::asm!(
+                "cpuid",
+                in("eax") 0xBu32,
+                in("ecx") 0u32,
+                out("eax") eax,
+                out("ebx") ebx,
+                out("ecx") ecx,
+                out("edx") edx,
+                options(nostack, preserves_flags)
+            );
+            
+            // 논리 프로세서 수 (EBX[15:0])
+            let logical_count = ebx & 0xFFFF;
+            if logical_count > 0 {
+                return logical_count as usize;
+            }
+        }
+        
+        // 기본값: 1 (BSP만)
+        1
+    }
+}
+
+/// AP APIC ID 목록 감지
+fn detect_ap_apic_ids(total_cpus: usize) -> Vec<u8> {
+    // TODO: ACPI MADT에서 APIC ID 목록 읽기
+    // 현재는 기본 구현 (BSP APIC ID 제외)
+    let bsp_apic_id = apic::get_local_apic_id();
+    let mut apic_ids = Vec::new();
+    
+    // 간단한 구현: 1부터 시작하는 연속된 APIC ID 가정
+    for i in 0..total_cpus {
+        let apic_id = i as u8;
+        if apic_id != bsp_apic_id {
+            apic_ids.push(apic_id);
+        }
+    }
+    
+    apic_ids
+}
+
+/// Application Processor 초기화
+///
+/// # Arguments
+/// * `apic_id` - 초기화할 AP의 APIC ID
+///
+/// # Safety
+/// SMP 초기화 중에만 호출되어야 합니다.
+unsafe fn init_application_processor(apic_id: u8) -> Result<(), &'static str> {
+    crate::log_info!("Initializing AP with APIC ID {}...", apic_id);
+    
+    // 1. INIT IPI 전송 (CPU 리셋)
+    ipi::send_init_ipi(apic_id);
+    
+    // INIT IPI 전송 후 10ms 대기
+    let start_ms = crate::drivers::timer::get_milliseconds();
+    while crate::drivers::timer::get_milliseconds() - start_ms < 10 {
+        core::hint::spin_loop();
+    }
+    
+    // 2. SIPI 전송 (첫 번째)
+    let boot_page = ap_boot::ap_boot_code_page();
+    ipi::send_startup_ipi(apic_id, boot_page);
+    
+    // SIPI 전송 후 200us 대기
+    let start_ms = crate::drivers::timer::get_milliseconds();
+    while crate::drivers::timer::get_milliseconds() - start_ms < 1 {
+        core::hint::spin_loop();
+    }
+    
+    // 3. SIPI 전송 (두 번째, 첫 번째가 실패했을 경우)
+    // AP가 시작되지 않았는지 확인
+    let mut timeout = 1000; // 1초 타임아웃
+    while timeout > 0 {
+        // AP가 시작되었는지 확인 (AP가 초기화 완료 플래그 설정)
+        if is_ap_initialized(apic_id) {
+            break;
+        }
+        
+        timeout -= 1;
+        for _ in 0..100 {
+            core::hint::spin_loop();
+        }
+    }
+    
+    if timeout == 0 {
+        // 두 번째 SIPI 전송
+        ipi::send_startup_ipi(apic_id, boot_page);
+        
+        // 추가 대기
+        timeout = 1000;
+        while timeout > 0 {
+            if is_ap_initialized(apic_id) {
+                break;
+            }
+            
+            timeout -= 1;
+            for _ in 0..100 {
+                core::hint::spin_loop();
+            }
+        }
+        
+        if timeout == 0 {
+            return Err("AP initialization timeout");
+        }
+    }
+    
+    Ok(())
+}
+
+/// AP 초기화 완료 플래그 (APIC ID별)
+static AP_INIT_FLAGS: Mutex<alloc::collections::BTreeMap<u8, bool>> = Mutex::new(alloc::collections::BTreeMap::new());
+
+/// AP 초기화 완료 여부 확인
+fn is_ap_initialized(apic_id: u8) -> bool {
+    let flags = AP_INIT_FLAGS.lock();
+    flags.get(&apic_id).copied().unwrap_or(false)
+}
+
+/// AP 초기화 완료 플래그 설정
+pub fn set_ap_initialized(apic_id: u8) {
+    let mut flags = AP_INIT_FLAGS.lock();
+    flags.insert(apic_id, true);
+}
+
+/// CPU 등록 (AP에서 호출)
+pub fn register_cpu(cpu_info: CpuInfo) {
+    let mut cpus = CPUS.lock();
+    cpus.push(cpu_info);
+    *CPU_COUNT.lock() = cpus.len();
 }
 
 /// 현재 활성화된 CPU 수 반환

@@ -26,10 +26,11 @@ pub struct PowerManager {
 impl PowerManager {
     /// 새 전력 관리자 생성
     pub fn new() -> Result<Self, PowerError> {
-        // Choose default power mode based on build profile features
+        // Choose default power mode based on runtime profile (default: PowerSaver)
         let default_mode = match crate::config::profile::current_profile() {
             crate::config::profile::Profile::PowerSaver => PowerMode::PowerSaving,
             crate::config::profile::Profile::Performance => PowerMode::Performance,
+            crate::config::profile::Profile::Headless => PowerMode::Balanced,
             _ => PowerMode::Balanced,
         };
         Ok(Self {
@@ -102,12 +103,18 @@ impl PowerManager {
         match mode {
             PowerMode::Performance => {
                 self.cpu_scaling.set_max_performance()?;
+                // 고성능 모드에서는 잦은 타이머 wakeup이 필요하므로 coalescing 비활성화
+                crate::drivers::timer::set_idle_tick_coalescing(false, 0);
             }
             PowerMode::Balanced => {
                 self.cpu_scaling.set_balanced()?;
+                // 균형 모드: 중간 수준의 coalescing (약 200Hz 등가)
+                crate::drivers::timer::set_idle_tick_coalescing(true, 4);
             }
             PowerMode::PowerSaving => {
                 self.cpu_scaling.set_power_saving()?;
+                // 절전 모드: aggressive coalescing (약 100Hz 등가)
+                crate::drivers::timer::set_idle_tick_coalescing(true, 9);
             }
         }
         
@@ -173,11 +180,18 @@ impl PowerManager {
         
         crate::log_info!("=== Entering S3 suspend ===");
         
-        // 사전 검증: ACPI 지원 확인
+        // 사전 검증: ACPI 지원 확인 및 검증 도구 실행
         if let Some(ref parser) = self.acpi_parser {
+            // S3 지원 확인
             if !parser.is_s3_supported() {
                 crate::log_error!("S3 sleep state not supported by ACPI");
                 return Err(PowerError::Unsupported);
+            }
+            
+            // S3 Sleep 검증 도구 실행
+            if let Err(e) = parser.validate_s3_sleep() {
+                crate::log_error!("S3 sleep validation failed: {:?}", e);
+                return Err(e);
             }
         }
         
