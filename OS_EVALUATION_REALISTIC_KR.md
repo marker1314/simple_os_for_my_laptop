@@ -39,8 +39,8 @@
    - ✅ 구현 완료: 스왑 관리자 구조 및 정책 (LRU 선택, 프리페칭, 압축 통합)
    - ✅ 구현 완료: 메모리 상태 추적 (swap_map, 통계)
    - ✅ 구현 완료: Page Fault 통합 (`src/interrupts/idt.rs:329-357` - 스왑 인 경로)
-   - ❌ 스텁 상태: 실제 디스크 I/O (`swap.rs:161-166, 215-219` - `device.write_block/read_block` 호출 주석 처리, TODO 표시)
-   - 📝 현재: 로그 출력 및 메모리 상태 업데이트만 동작, 실제 데이터 영속화는 미구현
+   - ✅ 디스크 I/O 경로 구현: ATA `read_block/write_block` 루프를 통해 4KB(8섹터) 단위 스왑 인/아웃 수행
+   - 📝 현재: 에러 처리/재시도는 기본 수준이며, 스왑 슬롯 재사용 정책은 단순
 
 **종합 평가:**
 - 대부분의 모듈이 **기본 구조 + 골격 수준**으로 구현되어 있음
@@ -769,17 +769,17 @@
 
 ### 11.3 우선순위 높음 (추가 개선 필요)
 
-1. **USB 제어 요청 전송** (`src/drivers/usb/xhci.rs`, `src/drivers/usb/ehci.rs`)
-   - 현재: 기본 구조만
-   - 개선: Command Ring/Queue Head 실제 구현
+1. **USB HID Interrupt IN 수신** (`src/drivers/usb/xhci.rs`, `src/drivers/usb/hid.rs`)
+   - 현재: Control 전송(Setup/Data/Status)과 Event Ring 완료 대기 루프 구현, Interrupt IN은 `NotImplemented`
+   - 개선: 엔드포인트/트랜스퍼 링 구성 및 HID 인터럽트 IN 경로 완성
 
-2. **오디오 코덱 초기화** (`src/drivers/audio/hda.rs`)
-   - 현재: 코덱 검색만
-   - 개선: Verb 명령 전송 및 PCM 출력
+2. **오디오 PCM 출력 완성** (`src/drivers/audio/hda.rs`)
+   - 현재: 컨트롤러 초기화·코덱 검색·CORB/RIRB·Verb 전송 골격, PCM 스트림(BDL/포맷/Start/Stop) 골격
+   - 개선: DMA 버퍼 채움/언더런 처리, 실출력 검증 및 오류 복구
 
 3. **TLS 완전한 핸드셰이크** (`src/net/tls/handshake.rs`)
-   - 현재: 기본 구조만
-   - 개선: 실제 키 교환 및 인증서 검증
+   - 현재: ClientHello/ServerHello/Finished 흐름과 키 유도, AES/HMAC 구현, RSA/서명검증은 부분 구현
+   - 개선: RSA 모듈러 지수연산/서명검증 완성, 체인/CRL 검증 경로 보강
 
 4. **S3 Sleep 검증** (`src/power/manager.rs`)
    - 현재: 구현되어 있으나 미검증
@@ -989,25 +989,24 @@ Simple OS는 **교육/연구 목적으로는 우수**한 OS입니다:
 - `src/boot/hw_probe.rs`: CPU 벤더/브랜드 및 PCI 디바이스 스캔 로깅
 - AMD 노트북 하드웨어 정보 부팅 시 출력으로 디버깅 용이
 
-#### Phase 1: 핵심 드라이버 완성
-1. **USB HID 입력 구현** (`src/drivers/usb/core.rs`)
-   - xHCI Control 전송(Setup/Data/Status TRB, Event Ring 완료 확인)
-   - HID 키보드/마우스 리포트 폴링 추가
-   - Interrupt IN 전송 스켈레톤 (향후 완성 예정)
-   - 실사용: USB 키보드/마우스 기본 입력 지원
+#### Phase 1: 핵심 드라이버 보강(현실 반영)
+1. **USB HID 입력 경로 진전** (`src/drivers/usb/core.rs`)
+   - xHCI Control 전송(Setup/Data/Status TRB, Event Ring 완료 확인) 구현
+   - HID 키보드/마우스 리포트 폴링(폴링 방식) 보조
+   - Interrupt IN 전송은 스켈레톤 단계 (향후 완성 예정)
+   - 현상: 일부 장치에서 기본 입력 지원, 안정성은 향후 개선 필요
 
-2. **HDA 오디오 PCM 출력 경로** (`src/drivers/audio/hda.rs`)
-   - `setup_pcm_output`: Stream Descriptor, BDL(Buffer Descriptor List), 포맷 설정
-   - `start_pcm_output`, `stop_pcm_output`: 스트림 제어
-   - 전역 `HdaController` 접근 함수 제공
-   - 실사용: 기본 오디오 재생 준비
+2. **HDA 오디오 PCM 출력 경로(골격)** (`src/drivers/audio/hda.rs`)
+   - `setup_pcm_output`: Stream Descriptor/BDL/포맷 설정 골격
+   - `start_pcm_output`, `stop_pcm_output`: 스트림 제어 골격
+   - 전역 `HdaController` 접근 제공
+   - 현상: DMA 버퍼 채움 등 실제 음성 출력은 추가 구현 필요
 
-3. **NVMe 드라이버 완전 구현** (`src/drivers/nvme/mod.rs`)
-   - Admin Queue(ASQ/ACQ) 초기화 및 명령 전송
-   - Identify Controller/Namespace 구현
-   - PRP(Physical Region Page) 기반 읽기 구현
-   - `NvmeBlockDevice`: `BlockDevice` 트레이트 구현으로 파일시스템 통합
-   - 실사용: 최신 NVMe SSD 지원으로 빠른 부팅/파일 접근
+3. **NVMe 드라이버 스켈레톤** (`src/drivers/nvme/mod.rs`)
+   - Admin Queue(ASQ/ACQ) 초기화 및 Identify Controller 지원
+   - PRP 기반 단순 Read 경로 제공 (`read_lba`), Write 미구현
+   - `NvmeBlockDevice` 어댑터로 `BlockDevice` 트레이트 연결(제한적)
+   - 현상: 기초 판독은 가능하나 전체 스토리지 통합·안정성은 추가 구현 필요
 
 #### Phase 2: 네트워킹 및 보안 강화
 4. **RTL8168/8111 NIC 드라이버** (`src/drivers/rtl8168.rs`)
@@ -1057,7 +1056,7 @@ Simple OS는 **교육/연구 목적으로는 우수**한 OS입니다:
 
 | 항목 | 이전 상태 | 현재 상태 | 개선 |
 |------|----------|----------|------|
-| **스토리지** | ATA/SATA만 | **NVMe 지원** | ✅ 최신 SSD 사용 가능 |
+| **스토리지** | ATA/SATA만 | **NVMe(읽기 스켈레톤)** | ✅ 일부 최신 SSD 판독 경로 확보 |
 | **네트워크** | RTL8139만 | **RTL8168 추가** | ✅ 더 많은 NIC 지원 |
 | **보안** | 기본 보호 | **TLS 엄격 모드 + 방화벽** | ✅ 네트워크 보안 강화 |
 | **전력 관리** | S3 미검증 | **S3 서스펜드/리줌 구현** | ✅ 노트북 절전 지원 |

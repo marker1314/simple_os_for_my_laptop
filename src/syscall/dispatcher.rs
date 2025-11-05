@@ -33,6 +33,11 @@ pub fn dispatch_syscall(
             return SyscallError::InvalidSyscall.as_i64();
         }
     };
+    // Capability check (global placeholder until per-process caps are plumbed)
+    if !crate::security::is_syscall_allowed(syscall) {
+        crate::log_warn!("Syscall denied by capability policy: {:?}", syscall);
+        return SyscallError::PermissionDenied.as_i64();
+    }
     
     // 시스템 콜 메트릭 기록
     crate::monitoring::record_syscall();

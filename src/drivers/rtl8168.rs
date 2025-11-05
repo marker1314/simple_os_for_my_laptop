@@ -18,6 +18,8 @@ pub struct Rtl8168Driver {
     mmio_base: u64,
     mac: MacAddress,
     initialized: bool,
+    rx_errors: u32,
+    tx_errors: u32,
 }
 
 impl Rtl8168Driver {
@@ -28,8 +30,23 @@ impl Rtl8168Driver {
             mmio_base: 0,
             mac: MacAddress([0;6]),
             initialized: false,
+            rx_errors: 0,
+            tx_errors: 0,
         }
     }
+
+    /// Very small watchdog: if too many errors, reinit controller
+    pub unsafe fn watchdog(&mut self) {
+        if self.rx_errors + self.tx_errors > 100 && self.initialized {
+            crate::log_warn!("rtl8168: watchdog resetting controller");
+            let _ = self.init(&self.pci);
+            self.rx_errors = 0;
+            self.tx_errors = 0;
+        }
+    }
+
+    /// Link check stub (would read PHY status in real impl)
+    pub fn link_up(&self) -> bool { self.initialized }
 }
 
 impl EthernetDriver for Rtl8168Driver {
@@ -70,7 +87,9 @@ impl EthernetDriver for Rtl8168Driver {
     }
 
     fn handle_interrupt(&mut self) {
-        // TODO: acknowledge interrupts
+        // TODO: acknowledge interrupts (stub)
+        // Periodic link check / watchdog kick
+        unsafe { self.watchdog(); }
     }
 
     fn is_initialized(&self) -> bool { self.initialized }

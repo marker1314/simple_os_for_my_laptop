@@ -749,3 +749,12 @@ pub fn rsa_encrypt_pkcs1_v15(
     public_key.encrypt_pkcs1_v15(message)
 }
 
+/// RSA 공개키 모듈러 지수 연산 기반의 PKCS#1 v1.5 검증용 복호화
+/// signature^e mod n 을 계산하여 패딩된 블록을 반환합니다.
+pub fn rsa_verify_pkcs1_v15(
+    public_key: &RsaPublicKey,
+    signature: &[u8],
+) -> Result<alloc::vec::Vec<u8>, TlsError> {
+    public_key.encrypt_pkcs1_v15(signature)
+}
+

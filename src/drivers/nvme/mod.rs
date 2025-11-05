@@ -40,6 +40,7 @@ const OPC_IDENTIFY: u8 = 0x06;
 
 // NVM opcodes
 const OPC_READ: u8 = 0x02;
+const OPC_WRITE: u8 = 0x01;
 
 #[repr(C, packed)]
 struct SqEntry {
@@ -270,6 +271,30 @@ impl NvmeController {
         if status != 0 { return Err(NvmeError::IoError); }
         Ok(())
     }
+
+    /// Write one LBA from PRP1 buffer for NSID=1
+    pub unsafe fn write_lba(&mut self, nsid: u32, lba: u64, blocks: u16, src_phys: PhysAddr) -> Result<(), NvmeError> {
+        let sqe = SqEntry {
+            opc: OPC_WRITE,
+            fuse_psdt: 0,
+            cid: 3,
+            nsid,
+            rsvd2: 0,
+            mptr: 0,
+            prp1: src_phys.as_u64(),
+            prp2: 0,
+            cdw10: (lba & 0xFFFF_FFFF) as u32,
+            cdw11: (lba >> 32) as u32,
+            cdw12: ((blocks as u32 - 1) & 0xFFFF),
+            cdw13: 0,
+            cdw14: 0,
+            cdw15: 0,
+        };
+        let cqe = self.admin_submit_and_wait(&sqe)?;
+        let status = (cqe.status_p >> 1) & 0x7FFF;
+        if status != 0 { return Err(NvmeError::IoError); }
+        Ok(())
+    }
 }
 
 static mut NVME: Option<NvmeController> = None;
@@ -328,7 +353,20 @@ impl crate::drivers::ata::BlockDevice for NvmeBlockDevice {
         }
     }
     fn write_block(&mut self, _block: u64, _buf: &[u8]) -> Result<usize, crate::drivers::ata::BlockDeviceError> {
-        Err(crate::drivers::ata::BlockDeviceError::WriteError)
+        if _buf.len() < 512 { return Err(crate::drivers::ata::BlockDeviceError::InvalidBuffer); }
+        unsafe {
+            if let Some(ctrl) = NVME.as_mut() {
+                let frame = crate::memory::allocate_frame().ok_or(crate::drivers::ata::BlockDeviceError::WriteError)?;
+                let phys = frame.start_address();
+                let off = crate::memory::paging::get_physical_memory_offset(crate::boot::get_boot_info());
+                let dst = (off + phys.as_u64()).as_mut_ptr::<u8>();
+                for i in 0..512 { core::ptr::write_volatile(dst.add(i), _buf[i]); }
+                ctrl.write_lba(1, _block, 1, phys).map_err(|_| crate::drivers::ata::BlockDeviceError::WriteError)?;
+                Ok(512)
+            } else {
+                Err(crate::drivers::ata::BlockDeviceError::NotReady)
+            }
+        }
     }
     fn num_blocks(&self) -> u64 { 0 }
 }

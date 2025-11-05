@@ -325,6 +325,23 @@ pub fn poll_hid() {
     let controller: *mut GenericUsbHostController = &mut mgr.host_controllers[0];
     for (_addr, hid) in mgr.hid_devices.iter() {
         match hid.kind {
+            HidDeviceKind::Keyboard => unsafe {
+                // Boot keyboard report: 8 bytes (modifiers, reserved, 6 keycodes)
+                let mut buf = [0u8; 8];
+                if (*controller).recv_interrupt_in(hid.interrupt_in.map(|e| e.address).unwrap_or(0), buf.as_mut_ptr(), buf.len() as u16).is_err() {
+                    let req = build_get_report_request(hid.interface_number, 0x01, 0, buf.len() as u16);
+                    let _ = (*controller).send_control_request(&req, buf.as_mut_ptr(), buf.len() as u16);
+                }
+                // Very small usage->PS/2 set1 mapping for alphanumerics
+                // buf[2..8] are 6 keycodes (HID usage IDs)
+                for &usage in &buf[2..] {
+                    if usage == 0 { continue; }
+                    if let Some(scan) = hid_usage_to_ps2_set1(usage) {
+                        crate::drivers::keyboard::inject_scan_code(scan);
+                        crate::monitoring::record_hid_event();
+                    }
+                }
+            },
             HidDeviceKind::Mouse => unsafe {
                 let mut buf = [0u8; core::mem::size_of::<MouseReport>()];
                 // 우선 Interrupt IN 시도
@@ -346,6 +363,7 @@ pub fn poll_hid() {
 
                 // 이동 이벤트
                 crate::drivers::mouse::inject_event(crate::drivers::mouse::MouseEvent::Move(x, y));
+                crate::monitoring::record_hid_event();
 
                 // 버튼 이벤트 (현재 버튼 상태와 비교)
                 let (mut left, mut right, mut middle) = crate::drivers::mouse::get_buttons();
@@ -355,21 +373,73 @@ pub fn poll_hid() {
                 if new_left != left {
                     let ev = if new_left { crate::drivers::mouse::MouseEvent::LeftButtonDown(x,y) } else { crate::drivers::mouse::MouseEvent::LeftButtonUp(x,y) };
                     crate::drivers::mouse::inject_event(ev);
+                    crate::monitoring::record_hid_event();
                     left = new_left;
                 }
                 if new_right != right {
                     let ev = if new_right { crate::drivers::mouse::MouseEvent::RightButtonDown(x,y) } else { crate::drivers::mouse::MouseEvent::RightButtonUp(x,y) };
                     crate::drivers::mouse::inject_event(ev);
+                    crate::monitoring::record_hid_event();
                     right = new_right;
                 }
                 if new_middle != middle {
                     let ev = if new_middle { crate::drivers::mouse::MouseEvent::MiddleButtonDown(x,y) } else { crate::drivers::mouse::MouseEvent::MiddleButtonUp(x,y) };
                     crate::drivers::mouse::inject_event(ev);
+                    crate::monitoring::record_hid_event();
                     middle = new_middle;
                 }
             },
             _ => {}
         }
+    }
+}
+
+// 간단한 HID Usage -> PS/2 Set1 스캔코드 맵 (일부만)
+fn hid_usage_to_ps2_set1(usage: u8) -> Option<u8> {
+    match usage {
+        // Digits 1-0 (HID 0x1E-0x27) -> PS/2 0x02-0x0B
+        0x1E => Some(0x02), // 1
+        0x1F => Some(0x03), // 2
+        0x20 => Some(0x04), // 3
+        0x21 => Some(0x05), // 4
+        0x22 => Some(0x06), // 5
+        0x23 => Some(0x07), // 6
+        0x24 => Some(0x08), // 7
+        0x25 => Some(0x09), // 8
+        0x26 => Some(0x0A), // 9
+        0x27 => Some(0x0B), // 0
+        // Letters a-z (HID 0x04-0x1D) -> PS/2 map
+        0x04 => Some(0x1E), // a
+        0x05 => Some(0x30), // b
+        0x06 => Some(0x2E), // c
+        0x07 => Some(0x20), // d
+        0x08 => Some(0x12), // e
+        0x09 => Some(0x21), // f
+        0x0A => Some(0x22), // g
+        0x0B => Some(0x23), // h
+        0x0C => Some(0x17), // i
+        0x0D => Some(0x24), // j
+        0x0E => Some(0x25), // k
+        0x0F => Some(0x26), // l
+        0x10 => Some(0x32), // m
+        0x11 => Some(0x31), // n
+        0x12 => Some(0x18), // o
+        0x13 => Some(0x19), // p
+        0x14 => Some(0x10), // q
+        0x15 => Some(0x13), // r
+        0x16 => Some(0x1F), // s
+        0x17 => Some(0x14), // t
+        0x18 => Some(0x16), // u
+        0x19 => Some(0x2F), // v
+        0x1A => Some(0x11), // w
+        0x1B => Some(0x2D), // x
+        0x1C => Some(0x15), // y
+        0x1D => Some(0x2C), // z
+        // Space, Enter, Backspace
+        0x2C => Some(0x39), // Space
+        0x28 => Some(0x1C), // Enter
+        0x2A => Some(0x0E), // Backspace
+        _ => None,
     }
 }
 

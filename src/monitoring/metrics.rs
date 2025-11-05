@@ -30,6 +30,14 @@ pub struct PerformanceMetrics {
     pub memory_used_bytes: u64,
     /// 메모리 피크 사용량 (바이트)
     pub memory_peak_bytes: u64,
+    /// HID events (keyboard+mouse)
+    pub hid_events: u64,
+    /// HDA underrun count
+    pub audio_underruns: u64,
+    /// TLS handshake failures
+    pub tls_failures: u64,
+    /// S3 resume successes
+    pub s3_success: u64,
 }
 
 impl Default for PerformanceMetrics {
@@ -46,6 +54,10 @@ impl Default for PerformanceMetrics {
             active_threads: 0,
             memory_used_bytes: 0,
             memory_peak_bytes: 0,
+            hid_events: 0,
+            audio_underruns: 0,
+            tls_failures: 0,
+            s3_success: 0,
         }
     }
 }
@@ -88,6 +100,10 @@ impl PerformanceMetrics {
         crate::log_info!("Memory used: {} bytes (peak: {} bytes)", 
                         self.memory_used_bytes, self.memory_peak_bytes);
         crate::log_info!("Active threads: {}", self.active_threads);
+        crate::log_info!("HID events: {}", self.hid_events);
+        crate::log_info!("Audio underruns: {}", self.audio_underruns);
+        crate::log_info!("TLS failures: {}", self.tls_failures);
+        crate::log_info!("S3 resumes: {}", self.s3_success);
         crate::log_info!("========================");
     }
     
@@ -104,6 +120,10 @@ impl PerformanceMetrics {
         crate::serial_println!("memory_used_bytes,{}", self.memory_used_bytes);
         crate::serial_println!("memory_peak_bytes,{}", self.memory_peak_bytes);
         crate::serial_println!("active_threads,{}", self.active_threads);
+        crate::serial_println!("hid_events,{}", self.hid_events);
+        crate::serial_println!("audio_underruns,{}", self.audio_underruns);
+        crate::serial_println!("tls_failures,{}", self.tls_failures);
+        crate::serial_println!("s3_success,{}", self.s3_success);
     }
 }
 
@@ -125,6 +145,30 @@ pub fn record_context_switch() {
 pub fn record_interrupt() {
     let mut metrics = METRICS.lock();
     metrics.interrupts += 1;
+}
+
+/// HID event record
+pub fn record_hid_event() {
+    let mut m = METRICS.lock();
+    m.hid_events += 1;
+}
+
+/// Audio underrun record
+pub fn record_audio_underrun() {
+    let mut m = METRICS.lock();
+    m.audio_underruns += 1;
+}
+
+/// TLS failure record
+pub fn record_tls_failure() {
+    let mut m = METRICS.lock();
+    m.tls_failures += 1;
+}
+
+/// S3 success record
+pub fn record_s3_success() {
+    let mut m = METRICS.lock();
+    m.s3_success += 1;
 }
 
 /// 시스템 콜 기록

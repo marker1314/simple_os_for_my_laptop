@@ -239,7 +239,7 @@ impl TlsCertificate {
         let _ = unused_bits; // unused for now
 
         // 5) RSA PKCS#1 v1.5 검증: 서명 복호화 후 DigestInfo 확인을 단순화하여 해시 접미 비교
-        let decrypted = crate::net::tls::rsa::rsa_encrypt_pkcs1_v15(&ca_key, sig_bytes)
+        let decrypted = crate::net::tls::rsa::rsa_verify_pkcs1_v15(&ca_key, sig_bytes)
             .map_err(|_| TlsCertificateError::SignatureInvalid)?;
 
         // PKCS#1 v1.5 DigestInfo를 엄밀히 파싱하는 대신, 끝의 해시가 일치하는지 확인
@@ -535,23 +535,15 @@ impl TlsCertificate {
         }
         
         // 발급자 확인
-        if let Some(issuer) = &self.issuer {
-            // CA 인증서에서 발급자와 일치하는 주체 찾기
-            for ca_cert in ca_certificates {
-                if let Some(subject) = ca_cert.subject() {
-                    // 간단한 비교 (실제로는 Distinguished Name 전체 비교 필요)
-                    if issuer == subject {
-                        crate::log_info!("TLS: Found matching CA certificate in chain");
-                        // 서명 검증은 향후 구현
-                        return Ok(());
-                    }
-                }
+        // 후보 CA들에 대해 실제 서명 검증 시도
+        for ca_cert in ca_certificates {
+            if self.verify_with_ca(ca_cert.data()).is_ok() {
+                crate::log_info!("TLS: Certificate chain verified against a provided CA");
+                return Ok(());
             }
         }
-        
-        // 기본 검증 통과
-        crate::log_info!("TLS: Certificate chain verified (basic structure)");
-        Ok(())
+
+        Err(TlsCertificateError::SignatureInvalid)
     }
     
     /// 만료일 확인

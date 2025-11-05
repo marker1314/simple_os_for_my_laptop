@@ -347,3 +347,14 @@ pub fn enable_aslr() -> Result<(), crate::memory::aslr::AslrError> {
     }
 }
 
+/// Enable SMEP/SMAP if supported (feature-gated by caller build flags)
+pub fn enable_smep_smap(smep: bool, smap: bool) {
+    use x86_64::registers::control::Cr4;
+    // Read-modify-write CR4
+    let mut cr4 = Cr4::read();
+    if smep { cr4 |= Cr4::SMEP; }
+    if smap { cr4 |= Cr4::SMAP; }
+    unsafe { Cr4::write(cr4); }
+    crate::log_info!("Paging: SMEP {}, SMAP {}", if smep {"on"} else {"off"}, if smap {"on"} else {"off"});
+}
+

@@ -117,6 +117,12 @@ pub fn read_key() -> Option<u8> {
     KEY_BUFFER.lock().pop()
 }
 
+/// 외부 드라이버(예: USB HID)에서 스캔 코드를 주입
+pub fn inject_scan_code(scan_code: u8) {
+    let mut buffer = KEY_BUFFER.lock();
+    let _ = buffer.push(scan_code);
+}
+
 /// 키 코드를 ASCII 문자로 변환 (간단한 구현)
 ///
 /// 실제로는 더 복잡한 키맵핑이 필요하지만, 기본적인 키만 처리합니다.

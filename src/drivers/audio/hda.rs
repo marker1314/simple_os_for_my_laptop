@@ -573,15 +573,19 @@ impl HdaController {
         let phys_offset = get_physical_memory_offset(crate::boot::get_boot_info());
         let bdl_virt = (phys_offset + bdl_phys.as_u64()).as_mut_ptr::<BdlEntry>();
         
-        // BDL 엔트리 생성 (단일 버퍼)
-        let mut bdl_entry = BdlEntry {
-            address_low: (buffer.as_u64() & 0xFFFF_FFFF) as u32,
-            address_high: ((buffer.as_u64() >> 32) & 0xFFFF_FFFF) as u32,
-            length: buffer_size as u32,
-            ioc: 1, // Interrupt On Completion
-        };
-        
-        core::ptr::write_volatile(bdl_virt, bdl_entry);
+        // 1a. Cyclic BDL: 4 엔트리로 분할하여 순환 (각 엔트리 마지막은 IOC)
+        let segments = 4usize;
+        let seg_len = (buffer_size / segments) & !0x7; // 8바이트 정렬
+        for i in 0..segments {
+            let addr = buffer.as_u64() + (i * seg_len) as u64;
+            let entry = BdlEntry {
+                address_low: (addr & 0xFFFF_FFFF) as u32,
+                address_high: ((addr >> 32) & 0xFFFF_FFFF) as u32,
+                length: if i == segments - 1 { (buffer_size - seg_len * (segments - 1)) as u32 } else { seg_len as u32 },
+                ioc: 1, // 각 엔트리 완료 시 인터럽트 요청 (간단화)
+            };
+            unsafe { core::ptr::write_volatile(bdl_virt.add(i), entry); }
+        }
         
         // BDL 주소 설정 (Stream Descriptor 레지스터)
         self.write_u32(sd_offset + HDA_SDBDPL, bdl_phys.as_u64() as u32)?;
@@ -590,8 +594,8 @@ impl HdaController {
         // 2. Cyclic Buffer Length 설정
         self.write_u32(sd_offset + HDA_SDCBL, buffer_size as u32)?;
         
-        // 3. Last Valid Index 설정 (BDL 엔트리 수 - 1, 현재는 0)
-        self.write_u16(sd_offset + HDA_SDLVI, 0)?;
+        // 3. Last Valid Index 설정 (BDL 엔트리 수 - 1)
+        self.write_u16(sd_offset + HDA_SDLVI, (segments as u16 - 1))?;
         
         // 4. Format 설정
         // Format: [23:20] = Sample Rate, [19:16] = Sample Bits, [15:8] = Channels, [7:0] = Base Rate
@@ -713,6 +717,25 @@ impl HdaController {
         let virt_base = self.get_virt_base()?;
         let addr = (virt_base.as_u64() + offset as u64) as *mut u8;
         write_volatile(addr, value);
+        Ok(())
+    }
+
+    /// 간단한 언더런 복구: 스트림 포지션이 버퍼 길이를 초과하거나 정지 시 재시작
+    pub unsafe fn recover_pcm_underrun(&mut self, stream_id: u8) -> Result<(), AudioError> {
+        if !self.initialized { return Err(AudioError::InitFailed); }
+        let sd_offset = HDA_SD_BASE + (stream_id as usize * HDA_SD_OFFSET);
+        let lpib = self.read_u32(sd_offset + HDA_SDLPIB)?;
+        let cbl = self.read_u32(sd_offset + HDA_SDCBL)?;
+        if lpib >= cbl {
+            // 정지 후 재시작
+            let mut sdctl = self.read_u8(sd_offset + HDA_SDCTL)?;
+            sdctl &= !HDA_SDCTL_RUN;
+            self.write_u8(sd_offset + HDA_SDCTL, sdctl)?;
+            self.write_u32(sd_offset + HDA_SDLPIB, 0)?;
+            sdctl |= HDA_SDCTL_RUN | HDA_SDCTL_IOCE;
+            self.write_u8(sd_offset + HDA_SDCTL, sdctl)?;
+            crate::log_warn!("HDA: underrun recovered on stream {}", stream_id);
+        }
         Ok(())
     }
 }
