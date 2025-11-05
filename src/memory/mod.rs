@@ -8,6 +8,13 @@ pub mod paging;
 pub mod heap;
 pub mod slab;
 pub mod guard;
+pub mod swap;
+pub mod aslr;
+pub mod recovery;
+pub mod frame_cache;
+pub mod compression;
+pub mod fragmentation;
+pub mod oom_killer;
 
 pub use map::{init as init_memory_map, get as get_memory_map, MemoryMap, MemoryType, ParsedMemoryRegion};
 pub use frame::{init as init_frame_allocator, allocate_frame};

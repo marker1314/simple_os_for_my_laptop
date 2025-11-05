@@ -15,6 +15,8 @@ pub struct PowerManager {
     acpi_parser: Option<AcpiParser>,
     /// CPU 스케일링 관리자
     cpu_scaling: CpuScaling,
+    /// CPU Idle 상태 관리자
+    idle_manager: crate::power::idle::IdleStateManager,
     /// 현재 전력 정책
     policy: PowerPolicy,
     /// 초기화 여부
@@ -33,6 +35,7 @@ impl PowerManager {
         Ok(Self {
             acpi_parser: None,
             cpu_scaling: CpuScaling::new(),
+            idle_manager: crate::power::idle::IdleStateManager::new(),
             policy: PowerPolicy::new(default_mode),
             initialized: false,
         })
@@ -119,15 +122,24 @@ impl PowerManager {
     /// CPU 유휴 상태 진입
     ///
     /// 유휴 상태에서 CPU를 최대한 절전 모드로 전환합니다.
+    /// 지연 시간 기반 동적 조정을 사용합니다.
     ///
     /// # Safety
     /// 인터럽트가 활성화된 상태에서 호출되어야 합니다.
-    pub unsafe fn enter_idle(&self) {
-        // 가장 깊은 가능한 C-State로 진입 (가능하면 MWAIT, 아니면 HLT)
-        // 인터럽트는 활성 상태여야 함
-        // 간단한 내장 관리자를 사용 (향후 ACPI 기반 채움)
-        let idle = crate::power::idle::IdleStateManager::new();
-        idle.enter_deepest();
+    pub unsafe fn enter_idle(&mut self) {
+        // CPU 사용률 업데이트
+        crate::power::cpu_usage::update_cpu_usage();
+        
+        // 정책에 따라 최적 C-State 선택
+        let cpu_usage = crate::power::cpu_usage::get_cpu_usage_percent();
+        let threshold = self.policy.get_idle_threshold();
+        let recommended = self.idle_manager.get_recommended_c_state(threshold, cpu_usage);
+        
+        // 지연 시간 기반 동적 조정 시도
+        // 현재는 정책 기반 선택, 향후 enter_optimal_c_state 사용 가능
+        self.idle_manager.enter_c_state(recommended);
+        
+        // Wakeup 시 record_wakeup 호출 필요 (인터럽트 핸들러에서)
     }
     
     /// CPU 사용률에 따른 동적 스케일링
@@ -153,7 +165,7 @@ impl PowerManager {
         Ok(())
     }
 
-    /// Suspend to RAM (S3) - complete implementation
+    /// Suspend to RAM (S3) - complete implementation with validation
     pub fn suspend_s3(&mut self) -> Result<(), PowerError> {
         if self.acpi_parser.is_none() {
             return Err(PowerError::Unsupported);
@@ -161,33 +173,63 @@ impl PowerManager {
         
         crate::log_info!("=== Entering S3 suspend ===");
         
+        // 사전 검증: ACPI 지원 확인
+        if let Some(ref parser) = self.acpi_parser {
+            if !parser.is_s3_supported() {
+                crate::log_error!("S3 sleep state not supported by ACPI");
+                return Err(PowerError::Unsupported);
+            }
+        }
+        
+        // 사전 검증: 장치 상태 확인
+        crate::log_info!("Pre-suspend validation: checking device states...");
+        
         // 1. 장치 quiesce (상태 저장 및 전원 끄기)
-        crate::power::device::quiesce_all_devices()?;
+        match crate::power::device::quiesce_all_devices() {
+            Ok(()) => {
+                crate::log_info!("All devices quiesced successfully");
+            }
+            Err(e) => {
+                crate::log_error!("Device quiesce failed: {:?}", e);
+                return Err(e);
+            }
+        }
         
         // 2. 캐시 flush
         unsafe {
+            crate::log_info!("Flushing TLB and cache...");
             x86_64::instructions::tlb::flush_all();
             // Write-back cache flush
             core::arch::asm!("wbinvd", options(nostack, preserves_flags));
+            crate::log_info!("Cache flushed");
         }
         
         // 3. 인터럽트 비활성화
+        crate::log_info!("Disabling interrupts...");
         crate::interrupts::idt::disable_interrupts();
         
-        // 4. ACPI sleep state 진입
+        // 4. 최종 확인: ACPI 파서 유효성 확인
         if let Some(ref parser) = self.acpi_parser {
             unsafe {
+                crate::log_info!("Entering S3 sleep state...");
                 // S3 sleep state (3)
                 match parser.enter_sleep_state(3) {
                     Ok(()) => {
                         // 시스템이 여기서 깨어나면 resume으로 진행
+                        // 이 지점은 실제로는 실행되지 않음 (하드웨어가 깨움)
                         crate::log_info!("Woke from S3 sleep");
                         self.resume()
                     }
                     Err(e) => {
                         // Sleep 실패 - 인터럽트 재활성화 및 장치 복원
+                        crate::log_error!("Failed to enter S3 sleep: {:?}", e);
                         crate::interrupts::idt::enable_interrupts();
-                        crate::power::device::resume_all_devices()?;
+                        match crate::power::device::resume_all_devices() {
+                            Ok(()) => {}
+                            Err(resume_err) => {
+                                crate::log_error!("Failed to resume devices after sleep failure: {:?}", resume_err);
+                            }
+                        }
                         Err(e)
                     }
                 }
@@ -230,6 +272,11 @@ impl PowerManager {
         self.cpu_scaling.get_current_p_state()
     }
     
+    /// Get current C-state
+    pub fn get_current_c_state(&self) -> u8 {
+        crate::power::idle::get_current_c_state()
+    }
+    
     /// Thermal throttle 적용 (온도가 높을 때)
     pub fn apply_thermal_throttle(&mut self) -> Result<(), PowerError> {
         // CPU 주파수를 낮춰 전력 소비 감소
@@ -259,11 +306,18 @@ impl PowerManager {
     }
     
     /// On-demand governor 업데이트
-    pub fn update_ondemand(&mut self, cpu_usage_percent: u8, now_ms: u64) -> Result<(), PowerError> {
+    pub fn update_ondemand(&mut self, cpu_usage_percent: Option<u8>, now_ms: u64) -> Result<(), PowerError> {
         if !self.initialized {
             return Err(PowerError::NotInitialized);
         }
-        self.cpu_scaling.update_ondemand(cpu_usage_percent, now_ms)
+        
+        // CPU 사용률이 제공되지 않으면 계산
+        let usage = cpu_usage_percent.unwrap_or_else(|| {
+            crate::power::cpu_usage::update_cpu_usage();
+            crate::power::cpu_usage::get_cpu_usage_percent()
+        });
+        
+        self.cpu_scaling.update_ondemand(usage, now_ms)
     }
 }
 

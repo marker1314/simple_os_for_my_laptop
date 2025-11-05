@@ -80,8 +80,47 @@ pub unsafe fn init_heap(
 /// 힙 할당 오류 핸들러
 ///
 /// 힙 할당이 실패했을 때 호출됩니다.
+/// Graceful degradation을 시도: 메모리 압박 시 힙 확장 시도
 #[alloc_error_handler]
 fn alloc_error_handler(layout: core::alloc::Layout) -> ! {
+    // 힙 할당 실패 로깅
+    crate::log_error!("Heap allocation failed: size={}, align={}", layout.size(), layout.align());
+    
+    // 힙 통계 로깅
+    let (heap_start, heap_size) = heap_bounds();
+    crate::log_error!("Heap bounds: start=0x{:016x}, size={} bytes", heap_start, heap_size);
+    
+    // 프레임 할당 통계 확인
+    if let Some((allocated, deallocated)) = crate::memory::frame::get_frame_stats() {
+        crate::log_error!("Frame stats: allocated={}, deallocated={}", allocated, deallocated);
+        if allocated > deallocated + 100 {
+            crate::log_error!("Warning: Possible memory leak detected ({} frames not deallocated)", allocated - deallocated);
+        }
+    }
+    
+    // 메모리 복구 메커니즘 시도
+    unsafe {
+        use crate::memory::recovery::{try_recover_allocation, RecoveryResult};
+        
+        match try_recover_allocation(layout) {
+            RecoveryResult::Success => {
+                crate::log_info!("Memory recovery successful, retrying allocation");
+                // 복구 성공 시 재시도 (할당은 자동으로 재시도됨)
+                // 하지만 alloc_error_handler는 반환할 수 없으므로 여기서는 패닉
+                // 실제로는 allocator가 재시도해야 함
+                panic!("allocation error: {:?} (recovery attempted but handler cannot return)", layout);
+            }
+            RecoveryResult::Partial => {
+                crate::log_warn!("Partial memory recovery, may still fail");
+                // 부분 복구는 여전히 실패할 수 있음
+            }
+            RecoveryResult::Failed => {
+                crate::log_error!("All memory recovery strategies failed");
+            }
+        }
+    }
+    
+    // 복구 불가능: 패닉
     panic!("allocation error: {:?}", layout)
 }
 

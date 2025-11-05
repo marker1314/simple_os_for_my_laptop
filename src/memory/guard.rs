@@ -17,20 +17,34 @@ use bootloader_api::BootInfo;
 /// # Safety
 /// 스택이 유효한 가상 주소 범위여야 함
 pub unsafe fn setup_stack_guard_pages(stack_start: VirtAddr, stack_end: VirtAddr) -> Result<(), &'static str> {
+    use crate::memory::paging::create_guard_page;
+    
     // 스택 아래에 guard page 설정 (오버플로우 방지)
-    let guard_page_below = Page::<Size4KiB>::containing_address(stack_start - Size4KiB::SIZE);
+    let guard_page_below = stack_start - Size4KiB::SIZE;
+    if let Err(e) = create_guard_page(guard_page_below) {
+        crate::log_warn!("Failed to create guard page below stack: {:?}", e);
+    }
     
     // 스택 위에 guard page 설정 (언더플로우 방지)
-    let guard_page_above = Page::<Size4KiB>::containing_address(stack_end);
+    let guard_page_above = stack_end;
+    if let Err(e) = create_guard_page(guard_page_above) {
+        crate::log_warn!("Failed to create guard page above stack: {:?}", e);
+    }
     
-    // Guard page는 매핑하지 않음 (접근 시 page fault 발생)
-    // 실제로는 이미 매핑되어 있지 않은지 확인하고, 매핑되어 있으면 제거
-    
-    crate::log_info!("Stack guard pages set up: below={:?}, above={:?}",
-                     guard_page_below.start_address(),
-                     guard_page_above.start_address());
+    crate::log_debug!("Stack guard pages set up: below={:?}, above={:?}",
+                     guard_page_below,
+                     guard_page_above);
     
     Ok(())
+}
+
+/// 스택에 Guard page 자동 생성
+/// 
+/// 스레드 생성 시 자동으로 호출되어 스택 주변에 guard page를 생성합니다.
+pub unsafe fn auto_create_stack_guard(stack_start: u64, stack_size: usize) -> Result<(), &'static str> {
+    let stack_start_va = VirtAddr::new(stack_start);
+    let stack_end_va = VirtAddr::new(stack_start + stack_size as u64);
+    setup_stack_guard_pages(stack_start_va, stack_end_va)
 }
 
 /// 스택 크기 확인 (간단한 검사)

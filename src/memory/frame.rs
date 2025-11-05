@@ -20,6 +20,13 @@ pub struct BootInfoFrameAllocator {
     current_frame_offset: u64,
     /// 해제된 프레임을 재사용하기 위한 자유 리스트
     free_list: Vec<PhysFrame<Size4KiB>>,
+    /// 할당된 프레임 추적 (디버그 모드에서만 활성)
+    #[cfg(debug_assertions)]
+    allocated_frames: Vec<PhysFrame<Size4KiB>>,
+    /// 할당된 프레임 수
+    allocated_count: usize,
+    /// 해제된 프레임 수
+    deallocated_count: usize,
 }
 
 impl BootInfoFrameAllocator {
@@ -29,6 +36,10 @@ impl BootInfoFrameAllocator {
             current_region_index: 0,
             current_frame_offset: 0,
             free_list: Vec::new(),
+            #[cfg(debug_assertions)]
+            allocated_frames: Vec::new(),
+            allocated_count: 0,
+            deallocated_count: 0,
         }
     }
 
@@ -71,17 +82,49 @@ impl BootInfoFrameAllocator {
 
     /// 해제된 프레임을 자유 리스트에 추가
     pub fn deallocate(&mut self, frame: PhysFrame<Size4KiB>) {
+        #[cfg(debug_assertions)]
+        {
+            // 디버그 모드: 할당 목록에서 제거 확인
+            if let Some(pos) = self.allocated_frames.iter().position(|&f| f.start_address() == frame.start_address()) {
+                self.allocated_frames.remove(pos);
+            } else {
+                crate::log_warn!("Double-free or invalid frame deallocation: {:?}", frame.start_address());
+            }
+        }
+        
+        self.deallocated_count += 1;
         self.free_list.push(frame);
+    }
+    
+    /// 메모리 누수 검사 (디버그 모드)
+    #[cfg(debug_assertions)]
+    pub fn check_leaks(&self) -> usize {
+        self.allocated_frames.len()
+    }
+    
+    /// 할당/해제 통계
+    pub fn get_stats(&self) -> (usize, usize) {
+        (self.allocated_count, self.deallocated_count)
     }
 }
 
 unsafe impl FrameAllocator<Size4KiB> for BootInfoFrameAllocator {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
-        // 우선 자유 리스트에서 재사용
-        if let Some(frame) = self.free_list.pop() {
-            return Some(frame);
+        let frame = if let Some(frame) = self.free_list.pop() {
+            // 자유 리스트에서 재사용
+            frame
+        } else {
+            // 새 프레임 할당
+            self.find_next_frame()?
+        };
+        
+        #[cfg(debug_assertions)]
+        {
+            self.allocated_frames.push(frame);
         }
-        self.find_next_frame()
+        
+        self.allocated_count += 1;
+        Some(frame)
     }
 }
 
@@ -96,16 +139,33 @@ pub fn init() {
 
 /// 프레임 할당
 pub fn allocate_frame() -> Option<PhysFrame<Size4KiB>> {
-    let mut allocator = FRAME_ALLOCATOR.lock();
-    allocator.as_mut()?.allocate_frame()
+    // 프레임 캐시에서 먼저 시도
+    crate::memory::frame_cache::allocate_frame_cached()
 }
 
 /// 프레임 해제 (전역)
 pub fn deallocate_frame(frame: PhysFrame<Size4KiB>) {
+    // 프레임 캐시에 먼저 추가 시도
+    crate::memory::frame_cache::cache_frame(frame);
+    
+    // 기존 할당자에도 기록 (통계용)
     let mut allocator = FRAME_ALLOCATOR.lock();
     if let Some(ref mut alloc) = *allocator {
         alloc.deallocate(frame);
     }
+}
+
+/// 메모리 누수 검사 (디버그 모드)
+#[cfg(debug_assertions)]
+pub fn check_memory_leaks() -> Option<usize> {
+    let allocator = FRAME_ALLOCATOR.lock();
+    allocator.as_ref().map(|alloc| alloc.check_leaks())
+}
+
+/// 프레임 할당 통계 가져오기
+pub fn get_frame_stats() -> Option<(usize, usize)> {
+    let allocator = FRAME_ALLOCATOR.lock();
+    allocator.as_ref().map(|alloc| alloc.get_stats())
 }
 
 /// 주소를 위로 정렬 (4KB 경계)

@@ -3,6 +3,7 @@
 //! 각 시스템 콜의 실제 구현을 포함합니다.
 
 use crate::syscall::{SyscallResult, SyscallError};
+use crate::syscall::validation::{validate_buffer, validate_string};
 use crate::drivers::{serial, timer, vga};
 use crate::scheduler;
 
@@ -45,51 +46,49 @@ pub fn sys_exit(exit_code: u64) -> SyscallResult {
 /// # Returns
 /// 실제로 쓴 바이트 수
 pub fn sys_write(fd: u64, buf: u64, count: u64) -> SyscallResult {
-    // TODO: 유저 공간 포인터 검증 (현재는 커널 공간만 있음)
+    // 파일 디스크립터 검증
+    if fd != 0 && fd != 1 && fd != 2 {
+        crate::log_warn!("Syscall: write() called with invalid fd: {}", fd);
+        return Err(SyscallError::InvalidArgument);
+    }
     
-    // 파일 디스크립터에 따라 처리
-    match fd {
-        1 | 2 => {
-            // stdout 또는 stderr: 시리얼 포트와 VGA에 출력
-            // 현재는 커널 공간이므로 포인터를 직접 읽을 수 있음
-            // 실제로는 유저 공간 포인터를 검증하고 복사해야 함
-            
-            if count == 0 {
-                return Ok(0);
-            }
-            
-            // 안전을 위해 최대 길이 제한
-            let max_len = 1024;
-            let len = if count > max_len { max_len as usize } else { count as usize };
-            
-            // 포인터를 유효한 메모리 영역인지 확인하고 읽기
-            // TODO: 실제 유저 공간 포인터 검증 구현
-            unsafe {
-                let ptr = buf as *const u8;
-                let slice = core::slice::from_raw_parts(ptr, len);
-                
-                // 시리얼 포트에 출력
-                for &byte in slice {
-                    serial::write_byte(byte);
-                }
-                
-                // VGA에 출력 (ASCII 문자만)
-                for &byte in slice {
-                    if byte.is_ascii() && !byte.is_ascii_control() {
-                        vga::write_char(byte as char);
-                    } else if byte == b'\n' {
-                        vga::newline();
-                    }
-                }
-            }
-            
-            Ok(len as u64)
+    if count == 0 {
+        return Ok(0);
+    }
+    
+    // 버퍼 검증 (포인터 유효성 및 크기 검증)
+    const MAX_WRITE_SIZE: usize = 1024;
+    let (validated_ptr, validated_len) = match validate_buffer(buf, count, MAX_WRITE_SIZE) {
+        Ok((ptr, len)) => (ptr, len),
+        Err(e) => {
+            crate::log_warn!("Syscall: write() buffer validation failed: {:?}", e);
+            return Err(e);
         }
-        _ => {
-            crate::log_warn!("Syscall: write() called with invalid fd: {}", fd);
-            Err(SyscallError::InvalidArgument)
+    };
+    
+    // 안전하게 버퍼 읽기
+    // 실제로는 유저 공간에서 커널 공간으로 복사해야 하지만,
+    // 현재는 커널 공간만 있으므로 직접 읽기
+    unsafe {
+        let ptr = validated_ptr as *const u8;
+        let slice = core::slice::from_raw_parts(ptr, validated_len);
+        
+        // 시리얼 포트에 출력
+        for &byte in slice {
+            serial::write_byte(byte);
+        }
+        
+        // VGA에 출력 (ASCII 문자만)
+        for &byte in slice {
+            if byte.is_ascii() && !byte.is_ascii_control() {
+                vga::write_char(byte as char);
+            } else if byte == b'\n' {
+                vga::newline();
+            }
         }
     }
+    
+    Ok(validated_len as u64)
 }
 
 /// 시스템 콜: Read
@@ -103,22 +102,34 @@ pub fn sys_write(fd: u64, buf: u64, count: u64) -> SyscallResult {
 ///
 /// # Returns
 /// 실제로 읽은 바이트 수
-pub fn sys_read(fd: u64, _buf: u64, _count: u64) -> SyscallResult {
-    // TODO: 유저 공간 포인터 검증
-    
-    match fd {
-        0 => {
-            // stdin: 키보드 입력
-            // TODO: 키보드 입력 큐에서 읽기 구현
-            // 현재는 키보드 드라이버가 있지만 입력 큐가 없음
-            crate::log_debug!("Syscall: read() from stdin (not implemented yet)");
-            Ok(0) // 현재는 항상 0 바이트 반환
-        }
-        _ => {
-            crate::log_warn!("Syscall: read() called with invalid fd: {}", fd);
-            Err(SyscallError::InvalidArgument)
-        }
+pub fn sys_read(fd: u64, buf: u64, count: u64) -> SyscallResult {
+    // 파일 디스크립터 검증
+    if fd != 0 {
+        crate::log_warn!("Syscall: read() called with invalid fd: {}", fd);
+        return Err(SyscallError::InvalidArgument);
     }
+    
+    if count == 0 {
+        return Ok(0);
+    }
+    
+    // 버퍼 검증
+    const MAX_READ_SIZE: usize = 1024;
+    let (validated_ptr, validated_len) = match validate_buffer(buf, count, MAX_READ_SIZE) {
+        Ok((ptr, len)) => (ptr, len),
+        Err(e) => {
+            crate::log_warn!("Syscall: read() buffer validation failed: {:?}", e);
+            return Err(e);
+        }
+    };
+    
+    // stdin: 키보드 입력
+    // TODO: 키보드 입력 큐에서 읽기 구현
+    // 현재는 키보드 드라이버가 있지만 입력 큐가 없음
+    crate::log_debug!("Syscall: read() from stdin (not implemented yet)");
+    
+    // 실제로는 validated_ptr에 데이터를 쓰지만, 현재는 구현 없음
+    Ok(0) // 현재는 항상 0 바이트 반환
 }
 
 /// 시스템 콜: Yield

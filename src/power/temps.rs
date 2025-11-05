@@ -157,6 +157,46 @@ static THERMAL_MONITOR: Mutex<ThermalMonitor> = Mutex::new(ThermalMonitor {
     runaway_counter: 0,
 });
 
+/// CPU 온도 모니터링 초기화
+pub fn init_thermal_monitoring() {
+    // 초기 온도 읽기
+    if let Some(temp) = read_package_temperature_c() {
+        let mut monitor = THERMAL_MONITOR.lock();
+        monitor.last_temperature_c = Some(temp);
+        crate::log_info!("Thermal monitoring initialized: {}°C", temp);
+    } else {
+        crate::log_warn!("Thermal monitoring not available (MSR not supported)");
+    }
+}
+
+/// 주기적 온도 모니터링 (타이머 틱에서 호출)
+pub fn periodic_thermal_check() {
+    let action = check_thermal_and_throttle();
+    
+    // 온도 로깅 (디버그 모드 또는 주기적)
+    #[cfg(debug_assertions)]
+    {
+        if let Some(temp) = read_package_temperature_c() {
+            if temp >= 70 {
+                crate::log_debug!("CPU temperature: {}°C", temp);
+            }
+        }
+    }
+    
+    // Emergency throttle 시 추가 조치
+    if matches!(action, ThermalAction::EmergencyThrottle) {
+        // 강제로 CPU를 최저 주파수로 설정
+        if let Some(manager) = crate::power::get_manager() {
+            if let Some(pm) = manager.lock().as_mut() {
+                // 최대 절전 모드로 전환 시도
+                if let Err(e) = pm.apply_emergency_throttle() {
+                    crate::log_error!("Emergency throttle failed: {:?}", e);
+                }
+            }
+        }
+    }
+}
+
 /// Thermal 상태 확인 및 throttle hook 호출
 pub fn check_thermal_and_throttle() -> ThermalAction {
     let action = THERMAL_MONITOR.lock().check_thermal_state();

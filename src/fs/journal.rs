@@ -67,10 +67,16 @@ impl Journal {
     
     /// 트랜잭션 시작
     pub fn begin_transaction(&mut self) {
+        // 이미 트랜잭션이 진행 중이면 무시 (중첩 트랜잭션 지원)
         if self.state == JournalState::Idle {
             self.state = JournalState::Transaction;
             self.sequence += 1;
         }
+    }
+    
+    /// 트랜잭션이 진행 중인지 확인
+    pub fn in_transaction(&self) -> bool {
+        matches!(self.state, JournalState::Transaction | JournalState::Committing | JournalState::Checkpointing)
     }
     
     /// 저널 엔트리 추가
@@ -162,6 +168,11 @@ pub fn init() {
 /// 트랜잭션 시작
 pub fn begin_transaction() {
     GLOBAL_JOURNAL.lock().begin_transaction();
+}
+
+/// 트랜잭션이 진행 중인지 확인
+pub fn in_transaction() -> bool {
+    GLOBAL_JOURNAL.lock().in_transaction()
 }
 
 /// 저널 엔트리 추가

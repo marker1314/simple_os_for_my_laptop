@@ -34,6 +34,9 @@ pub fn dispatch_syscall(
         }
     };
     
+    // 시스템 콜 메트릭 기록
+    crate::monitoring::record_syscall();
+    
     // 시스템 콜 디버그 로그
     crate::log_debug!(
         "Syscall: {:?} (args: {:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x})",

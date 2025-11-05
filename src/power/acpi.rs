@@ -204,6 +204,21 @@ impl AcpiParser {
         // 간단화: 실제로는 PM1_STS 레지스터를 읽어야 함
         false
     }
+    
+    /// S3 sleep state 지원 여부 확인
+    ///
+    /// FADT 테이블에서 S3 지원 여부를 확인합니다.
+    /// 현재는 기본적으로 지원한다고 가정합니다.
+    pub fn is_s3_supported(&self) -> bool {
+        if !self.initialized {
+            return false;
+        }
+        
+        // TODO: FADT 테이블 파싱하여 실제 S3 지원 여부 확인
+        // FADT의 SLP_TYPx 필드 확인
+        // 현재는 ACPI 파서가 초기화되어 있으면 지원한다고 가정
+        true
+    }
 }
 
 /// Minimal C-state descriptor for handoff to idle manager setup

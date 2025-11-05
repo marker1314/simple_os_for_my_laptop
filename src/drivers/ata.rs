@@ -330,6 +330,49 @@ impl AtaDriver {
     }
 }
 
+impl AtaDriver {
+    /// 내부 블록 읽기 (재시도 없음)
+    unsafe fn read_block_internal(&mut self, block: u64, buf: &mut [u8]) -> Result<usize, BlockDeviceError> {
+        // Record I/O activity timestamp
+        crate::drivers::ata::note_io_activity(crate::drivers::timer::get_milliseconds());
+        self.resume_if_needed()?;
+        // 드라이브 선택 및 LBA 모드 설정
+        let drive_select = match self.drive {
+            AtaDrive::Master => 0xE0,  // LBA mode, master
+            AtaDrive::Slave => 0xF0,   // LBA mode, slave
+        } | ((block >> 24) & 0x0F) as u8;  // LBA bits 24-27
+        
+        self.drive_port.write(drive_select);
+        self.wait_400ns();
+        
+        // 섹터 수 설정 (1 섹터)
+        self.sector_count_port.write(1);
+        
+        // LBA 주소 설정
+        self.lba_low_port.write((block & 0xFF) as u8);
+        self.lba_mid_port.write(((block >> 8) & 0xFF) as u8);
+        self.lba_high_port.write(((block >> 16) & 0xFF) as u8);
+        
+        // READ 명령 전송
+        self.command_port.write(ATA_CMD_READ_PIO);
+        
+        // BSY 클리어 대기
+        self.wait_not_busy()?;
+        
+        // DRQ 대기
+        self.wait_drq()?;
+        
+        // 데이터 읽기 (256 words = 512 bytes)
+        let buf_words = buf.as_mut_ptr() as *mut u16;
+        for i in 0..256 {
+            let word = self.data_port.read();
+            *buf_words.add(i) = word;
+        }
+        
+        Ok(SECTOR_SIZE)
+    }
+}
+
 impl BlockDevice for AtaDriver {
     fn block_size(&self) -> usize {
         SECTOR_SIZE
@@ -348,44 +391,25 @@ impl BlockDevice for AtaDriver {
             return Err(BlockDeviceError::InvalidBlock);
         }
         
-        unsafe {
-            // Record I/O activity timestamp
-            crate::drivers::ata::note_io_activity(crate::drivers::timer::get_milliseconds());
-            self.resume_if_needed()?;
-            // 드라이브 선택 및 LBA 모드 설정
-            let drive_select = match self.drive {
-                AtaDrive::Master => 0xE0,  // LBA mode, master
-                AtaDrive::Slave => 0xF0,   // LBA mode, slave
-            } | ((block >> 24) & 0x0F) as u8;  // LBA bits 24-27
-            
-            self.drive_port.write(drive_select);
-            self.wait_400ns();
-            
-            // 섹터 수 설정 (1 섹터)
-            self.sector_count_port.write(1);
-            
-            // LBA 주소 설정
-            self.lba_low_port.write((block & 0xFF) as u8);
-            self.lba_mid_port.write(((block >> 8) & 0xFF) as u8);
-            self.lba_high_port.write(((block >> 16) & 0xFF) as u8);
-            
-            // READ 명령 전송
-            self.command_port.write(ATA_CMD_READ_PIO);
-            
-            // BSY 클리어 대기
-            self.wait_not_busy()?;
-            
-            // DRQ 대기
-            self.wait_drq()?;
-            
-            // 데이터 읽기 (256 words = 512 bytes)
-            let buf_words = buf.as_mut_ptr() as *mut u16;
-            for i in 0..256 {
-                let word = self.data_port.read();
-                *buf_words.add(i) = word;
+        // 드라이버 레벨 재시도 메커니즘
+        use crate::kernel::error_recovery::{driver_retry, RetryConfig, record_recovery_event};
+        
+        let config = RetryConfig {
+            max_retries: 3,
+            retry_delay_ms: 10,
+            exponential_backoff: true,
+        };
+        
+        match driver_retry(|| {
+            unsafe {
+                self.read_block_internal(block, buf)
             }
-            
-            Ok(SECTOR_SIZE)
+        }, config) {
+            Ok(result) => Ok(result),
+            Err(e) => {
+                record_recovery_event("driver_retry");
+                Err(e)
+            }
         }
     }
     

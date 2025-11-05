@@ -44,7 +44,19 @@ impl RoundRobinScheduler {
     /// # Arguments
     /// * `thread` - 추가할 스레드
     pub fn add_thread(&mut self, thread: Arc<Mutex<Thread>>) {
-        thread.lock().set_ready();
+        {
+            let mut t = thread.lock();
+            t.set_ready();
+            
+            // OOM Killer 통계 업데이트
+            let total_memory = t.stack_size + (t.allocated_frames.len() * 4096);
+            crate::memory::oom_killer::update_thread_memory(
+                t.id,
+                0, // 힙 사용량은 별도로 추적 필요
+                t.stack_size,
+                t.allocated_frames.len(),
+            );
+        }
         self.ready_queue.push_back(thread);
     }
 
@@ -92,6 +104,8 @@ impl RoundRobinScheduler {
         if let Some(next) = self.ready_queue.pop_front() {
             next.lock().set_running();
             self.current_thread = Some(next);
+            // 컨텍스트 스위칭 메트릭 기록
+            crate::monitoring::record_context_switch();
             true
         } else {
             false
@@ -139,15 +153,35 @@ impl RoundRobinScheduler {
     /// # Arguments
     /// * `thread_id` - 종료할 스레드 ID
     pub fn terminate_thread(&mut self, thread_id: u64) {
+        // 현재 실행 중인 스레드 확인
         if let Some(current) = &self.current_thread {
             let mut thread = current.lock();
             if thread.id == thread_id {
-                thread.set_terminated();
+                // 리소스 정리
+                thread.cleanup();
                 drop(thread);
                 self.current_thread = None;
                 self.current_time = 0;
                 self.switch_to_next();
+                return;
             }
+        }
+        
+        // 준비 큐에서 찾기
+        let mut found = false;
+        self.ready_queue.retain(|t| {
+            let mut thread = t.lock();
+            if thread.id == thread_id {
+                thread.cleanup();
+                found = true;
+                false // 제거
+            } else {
+                true // 유지
+            }
+        });
+        
+        if found {
+            crate::log_info!("Thread {} terminated and removed from ready queue", thread_id);
         }
     }
 

@@ -4,6 +4,7 @@
 //! 현재는 읽기 전용으로 시작하며, 향후 쓰기 기능을 추가할 예정입니다.
 
 use super::vfs::{FileSystem, File, Directory, FileMetadata, FileType, FileMode, FsResult, FsError, Offset};
+use super::journal::{begin_transaction, add_entry, commit, checkpoint, rollback, JournalEntryType};
 use crate::drivers::ata::{BlockDevice, BlockDeviceError};
 use alloc::vec::Vec;
 use alloc::string::String;
@@ -291,7 +292,8 @@ impl Fat32FileSystem {
     /// # Arguments
     /// * `cluster` - 클러스터 번호
     /// * `value` - 쓸 값 (다음 클러스터 번호 또는 EOF 마커)
-    fn write_fat_entry(&mut self, cluster: u32, value: u32) -> FsResult<()> {
+    /// * `use_journal` - 저널링 사용 여부 (기본값: true)
+    fn write_fat_entry(&mut self, cluster: u32, value: u32, use_journal: bool) -> FsResult<()> {
         // FAT 오프셋 계산
         let fat_offset = cluster * 4;
         let fat_sector = self.boot_sector.fat_start_sector() + (fat_offset / 512) as u64;
@@ -309,17 +311,43 @@ impl Fat32FileSystem {
         fat_buf[entry_offset + 2] = bytes[2];
         fat_buf[entry_offset + 3] = bytes[3];
         
+        // 저널링 사용 시 트랜잭션 시작 및 저널에 기록
+        if use_journal {
+            // 트랜잭션이 없을 때만 시작
+            if !super::journal::in_transaction() {
+                begin_transaction();
+            }
+            // 첫 번째 FAT만 저널에 기록 (복사본은 체크포인트에서 처리)
+            if let Err(e) = add_entry(fat_sector, &fat_buf, JournalEntryType::MetadataWrite) {
+                rollback();
+                return Err(FsError::IOError);
+            }
+        }
+        
         // 모든 FAT 복사본에 쓰기
         for fat_index in 0..self.boot_sector.num_fats {
             let current_fat_sector = self.boot_sector.fat_start_sector() + 
                 (fat_index as u64 * self.boot_sector.sectors_per_fat_32 as u64) +
                 (fat_offset / 512) as u64;
             
+            // 저널링 사용 시 두 번째 FAT부터는 저널에 기록
+            if use_journal && fat_index > 0 {
+                if let Err(e) = add_entry(current_fat_sector, &fat_buf, JournalEntryType::MetadataWrite) {
+                    rollback();
+                    return Err(FsError::IOError);
+                }
+            }
+            
             self.device.write_block(current_fat_sector, &fat_buf)
                 .map_err(|_| FsError::IOError)?;
         }
         
         Ok(())
+    }
+    
+    /// write_fat_entry의 기본 버전 (저널링 사용)
+    fn write_fat_entry_journaled(&mut self, cluster: u32, value: u32) -> FsResult<()> {
+        self.write_fat_entry(cluster, value, true)
     }
     
     /// 빈 클러스터 찾기
@@ -371,7 +399,8 @@ impl Fat32FileSystem {
     /// # Arguments
     /// * `cluster` - 클러스터 번호
     /// * `data` - 쓸 데이터 (클러스터 크기)
-    fn write_cluster(&mut self, cluster: u32, data: &[u8]) -> FsResult<()> {
+    /// * `use_journal` - 저널링 사용 여부 (기본값: false, 데이터는 일반적으로 저널링 안 함)
+    fn write_cluster(&mut self, cluster: u32, data: &[u8], use_journal: bool) -> FsResult<()> {
         let cluster_size = self.boot_sector.sectors_per_cluster as usize * 512;
         if data.len() < cluster_size {
             return Err(FsError::IOError);
@@ -380,14 +409,37 @@ impl Fat32FileSystem {
         let sector = self.boot_sector.cluster_to_sector(cluster);
         let mut offset = 0;
         
+        // 저널링 사용 시 트랜잭션 시작
+        if use_journal {
+            // 트랜잭션이 없을 때만 시작
+            if !super::journal::in_transaction() {
+                begin_transaction();
+            }
+        }
+        
         for i in 0..self.boot_sector.sectors_per_cluster {
             let sector_buf = &data[offset..offset + 512];
-            self.device.write_block(sector + i as u64, sector_buf)
+            let current_sector = sector + i as u64;
+            
+            // 저널링 사용 시 저널에 기록
+            if use_journal {
+                if let Err(e) = add_entry(current_sector, sector_buf, JournalEntryType::DataWrite) {
+                    rollback();
+                    return Err(FsError::IOError);
+                }
+            }
+            
+            self.device.write_block(current_sector, sector_buf)
                 .map_err(|_| FsError::IOError)?;
             offset += 512;
         }
         
         Ok(())
+    }
+    
+    /// write_cluster의 기본 버전 (저널링 사용 안 함)
+    fn write_cluster_direct(&mut self, cluster: u32, data: &[u8]) -> FsResult<()> {
+        self.write_cluster(cluster, data, false)
     }
     
     /// 클러스터 체인 읽기
@@ -688,7 +740,7 @@ impl Fat32FileSystem {
         
         loop {
             let next_cluster = self.read_fat_entry(current_cluster)?;
-            self.write_fat_entry(current_cluster, 0)?; // 클러스터 해제
+            self.write_fat_entry_journaled(current_cluster, 0)?; // 클러스터 해제
             
             if next_cluster >= 0x0FFFFFF8 {
                 break; // EOF
@@ -723,7 +775,8 @@ impl Fat32FileSystem {
             if entry.name == name_8_3 {
                 // 엔트리 삭제 마킹 (첫 바이트를 0xE5로)
                 dir_buf[offset] = 0xE5;
-                self.write_cluster(dir_cluster, &dir_buf)?;
+                // 디렉토리 엔트리 삭제는 메타데이터이므로 저널링 사용
+                self.write_cluster(dir_cluster, &dir_buf, true)?;
                 return Ok(());
             }
         }
@@ -761,7 +814,8 @@ impl Fat32FileSystem {
                     )
                 };
                 dir_buf[offset..offset + size_of::<Fat32DirEntry>()].copy_from_slice(entry_bytes);
-                self.write_cluster(dir_cluster, &dir_buf)?;
+                // 디렉토리 엔트리 업데이트는 메타데이터이므로 저널링 사용
+                self.write_cluster(dir_cluster, &dir_buf, true)?;
                 return Ok(());
             }
         }
@@ -813,12 +867,12 @@ impl Fat32FileSystem {
             if next_cluster >= 0x0FFFFFF8 {
                 // 새 클러스터 할당 필요
                 let new_cluster = self.find_free_cluster()?;
-                self.write_fat_entry(current_cluster, new_cluster)?;
-                self.write_fat_entry(new_cluster, 0x0FFFFFFF)?; // EOF
+                self.write_fat_entry_journaled(current_cluster, new_cluster)?;
+                self.write_fat_entry_journaled(new_cluster, 0x0FFFFFFF)?; // EOF
                 
-                // 새 클러스터를 0으로 초기화
+                // 새 클러스터를 0으로 초기화 (데이터는 저널링 안 함)
                 let mut empty_cluster_buf = alloc::vec![0u8; cluster_size];
-                self.write_cluster(new_cluster, &empty_cluster_buf)?;
+                self.write_cluster_direct(new_cluster, &empty_cluster_buf)?;
                 
                 empty_cluster = new_cluster;
                 empty_offset = 0;
@@ -843,7 +897,8 @@ impl Fat32FileSystem {
         };
         dir_buf[empty_offset..empty_offset + size_of::<Fat32DirEntry>()]
             .copy_from_slice(entry_bytes);
-        self.write_cluster(empty_cluster, &dir_buf)?;
+        // 디렉토리 엔트리 추가는 메타데이터이므로 저널링 사용
+        self.write_cluster(empty_cluster, &dir_buf, true)?;
         
         Ok(())
     }
@@ -905,12 +960,12 @@ impl FileSystem for Fat32FileSystem {
         
         // 빈 클러스터 할당
         let first_cluster = self.find_free_cluster()?;
-        self.write_fat_entry(first_cluster, 0x0FFFFFFF)?; // EOF
+        self.write_fat_entry_journaled(first_cluster, 0x0FFFFFFF)?; // EOF
         
-        // 빈 클러스터 초기화
+        // 빈 클러스터 초기화 (데이터는 저널링 안 함)
         let cluster_size = self.boot_sector.sectors_per_cluster as usize * 512;
         let mut empty_cluster = alloc::vec![0u8; cluster_size];
-        self.write_cluster(first_cluster, &empty_cluster)?;
+        self.write_cluster_direct(first_cluster, &empty_cluster)?;
         
         // 디렉토리 엔트리 생성
         let name_8_3 = Self::name_to_8_3(filename);
@@ -979,7 +1034,7 @@ impl FileSystem for Fat32FileSystem {
         
         // 빈 클러스터 할당
         let first_cluster = self.find_free_cluster()?;
-        self.write_fat_entry(first_cluster, 0x0FFFFFFF)?; // EOF
+        self.write_fat_entry_journaled(first_cluster, 0x0FFFFFFF)?; // EOF
         
         // 디렉토리 클러스터 초기화 (. 및 .. 엔트리 포함)
         let cluster_size = self.boot_sector.sectors_per_cluster as usize * 512;
@@ -1040,7 +1095,8 @@ impl FileSystem for Fat32FileSystem {
         dir_cluster_buf[size_of::<Fat32DirEntry>()..2 * size_of::<Fat32DirEntry>()]
             .copy_from_slice(dotdot_bytes);
         
-        self.write_cluster(first_cluster, &dir_cluster_buf)?;
+        // 디렉토리 엔트리는 메타데이터이므로 저널링 사용
+        self.write_cluster(first_cluster, &dir_cluster_buf, true)?;
         
         // 부모 디렉토리에 엔트리 추가
         let name_8_3 = Self::name_to_8_3(dirname);
@@ -1247,9 +1303,9 @@ impl File for Fat32File<'_> {
                     // 현재는 단순화를 위해 에러 반환
                     return Err(FsError::IOError);
                 } else {
-                    self.filesystem.write_fat_entry(last_cluster, new_cluster)?;
+                    self.filesystem.write_fat_entry_journaled(last_cluster, new_cluster)?;
                 }
-                self.filesystem.write_fat_entry(new_cluster, 0x0FFFFFFF)?;
+                self.filesystem.write_fat_entry_journaled(new_cluster, 0x0FFFFFFF)?;
                 
                 (new_cluster, 0)
             };
@@ -1265,8 +1321,8 @@ impl File for Fat32File<'_> {
             cluster_buf[cluster_offset..cluster_offset + to_write]
                 .copy_from_slice(&buf[bytes_written..bytes_written + to_write]);
             
-            // 클러스터 쓰기
-            self.filesystem.write_cluster(cluster, &cluster_buf)?;
+            // 클러스터 쓰기 (데이터는 저널링 안 함, 성능상 이유)
+            self.filesystem.write_cluster_direct(cluster, &cluster_buf)?;
             
             bytes_written += to_write;
             current_offset += to_write;

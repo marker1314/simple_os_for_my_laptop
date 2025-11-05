@@ -157,45 +157,52 @@ impl PowerStatistics {
 
 static STATS: Mutex<PowerStatistics> = Mutex::new(PowerStatistics::default());
 
+/// 전력 통계 가져오기
+pub fn get_statistics() -> PowerStatistics {
+    *STATS.lock()
+}
+
 /// Periodic tick to accumulate stats and occasionally print a report
 pub fn tick(now_ms: u64) {
     let mut s = STATS.lock();
     s.uptime_ms = now_ms;
     
-    // Get current power from RAPL if available
-    let instant_power_mw = if let (Some(lsb_nj), Some(raw)) = (
-        crate::power::rapl::read_energy_unit_nanojoules(),
-        crate::power::rapl::read_package_energy_status(),
-    ) {
-        let current_nj = (raw as u64) * lsb_nj;
-        let power_mw = if let Some(last) = s.last_rapl_nj {
-            let delta_nj = current_nj.wrapping_sub(last);
-            // Calculate power: delta energy / delta time
-            let delta_ms = now_ms.saturating_sub(s.last_wakeup_time_ms);
-            if delta_ms > 0 {
-                (delta_nj / 1_000_000) / (delta_ms / 1000).max(1)
-            } else {
-                0
-            }
-        } else {
-            0
-        };
-        s.last_rapl_nj = Some(current_nj);
+    // Get current power from RAPL if available (개선된 측정)
+    let instant_power_mw = if let Some(power_watts) = crate::power::rapl::read_power_watts(now_ms) {
+        let power_mw = (power_watts * 1000.0) as u32; // Watts -> mW
+        
+        // 피크 전력 업데이트
+        if power_mw > s.peak_power_mw {
+            s.peak_power_mw = power_mw;
+        }
+        
+        // 이동 평균 계산
+        s.power_samples[s.sample_index] = power_mw;
+        s.sample_index = (s.sample_index + 1) % MOVING_AVG_WINDOW;
+        if s.sample_count < MOVING_AVG_WINDOW {
+            s.sample_count += 1;
+        }
+        
+        // 평균 전력 계산
+        let sum: u32 = s.power_samples.iter().sum();
+        s.avg_power_mw = sum / s.sample_count as u32;
+        
         power_mw
     } else {
-        0
+        // RAPL 측정 불가능한 경우 기존 평균값 사용
+        s.avg_power_mw
     };
     
     // Get current C-state and P-state
     let c_state = if let Some(manager) = crate::power::get_manager() {
         if let Some(pm) = manager.lock().as_ref() {
-            // Try to get current idle state (simplified - use 0 for now)
-            0
+            // Get current C-state from power manager
+            pm.get_current_c_state()
         } else {
-            0
+            crate::power::idle::get_current_c_state()
         }
     } else {
-        0
+        crate::power::idle::get_current_c_state()
     };
     
     let p_state = if let Some(manager) = crate::power::get_manager() {

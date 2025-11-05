@@ -76,8 +76,14 @@ fn read_scan_code() -> Option<u8> {
 ///
 /// IRQ 1 (인터럽트 33)에서 호출됩니다.
 pub extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: x86_64::structures::idt::InterruptStackFrame) {
+    // 인터럽트 메트릭 기록
+    crate::monitoring::record_interrupt();
+    
     // 스캔 코드 읽기
     if let Some(scan_code) = read_scan_code() {
+        // 사용자 활동 기록
+        crate::power::user_activity::record_activity(crate::power::user_activity::ActivityType::Keyboard);
+        
         // 버퍼에 추가
         let mut buffer = KEY_BUFFER.lock();
         if !buffer.push(scan_code) {

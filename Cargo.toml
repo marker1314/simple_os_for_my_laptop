@@ -30,6 +30,7 @@ fs = []
 gui = []
 touchpad = []
 smp = []
+usb = []
 
 # Default to balanced and enable all subsystems for current behavior
 default = ["balanced", "net", "fs", "gui", "touchpad", "smp"]

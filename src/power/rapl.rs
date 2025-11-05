@@ -130,21 +130,83 @@ unsafe fn write_msr(msr: u32, value: u64) {
     );
 }
 
+/// 전력 측정 컨텍스트 (이전 측정값 저장)
+static LAST_POWER_MEASUREMENT: Mutex<Option<PowerMeasurement>> = Mutex::new(None);
+
+#[derive(Debug, Clone, Copy)]
+struct PowerMeasurement {
+    energy_nj: u64,
+    timestamp_ms: u64,
+}
+
 /// Read current power consumption from RAPL (Watts)
-pub fn read_power_watts() -> Option<f32> {
+///
+/// 이전 측정값과 비교하여 실제 전력 소비를 계산합니다.
+pub fn read_power_watts(now_ms: u64) -> Option<f32> {
     if !msr_supported() { return None; }
     
-    // RAPL은 에너지만 제공하므로, 시간 간격으로 전력 계산 필요
-    // 이 함수는 간단한 추정치만 제공
     let energy_unit_nj = read_energy_unit_nanojoules()?;
     let energy_status = read_package_energy_status()?;
     
     // 에너지를 나노줄로 변환
-    let energy_nj = (energy_status as u64) * energy_unit_nj;
+    let current_energy_nj = (energy_status as u64).wrapping_mul(energy_unit_nj);
     
-    // 전력 계산을 위해서는 시간 간격이 필요하므로 여기서는 None 반환
-    // 실제 전력 계산은 stats.rs의 tick() 함수에서 수행
-    None
+    let mut last_measurement = LAST_POWER_MEASUREMENT.lock();
+    
+    if let Some(last) = *last_measurement {
+        let delta_energy_nj = current_energy_nj.wrapping_sub(last.energy_nj);
+        let delta_time_ms = now_ms.saturating_sub(last.timestamp_ms);
+        
+        if delta_time_ms > 0 && delta_time_ms < 10000 {
+            // 전력 = 에너지 / 시간
+            // delta_energy_nj는 나노줄, delta_time_ms는 밀리초
+            // 전력 (W) = (나노줄 / 1e9) / (밀리초 / 1000) = (나노줄 * 1000) / (밀리초 * 1e9)
+            let power_watts = (delta_energy_nj as f32 * 1000.0) / (delta_time_ms as f32 * 1_000_000_000.0);
+            
+            // 측정값 업데이트
+            *last_measurement = Some(PowerMeasurement {
+                energy_nj: current_energy_nj,
+                timestamp_ms: now_ms,
+            });
+            
+            Some(power_watts)
+        } else {
+            // 시간 간격이 너무 크거나 작음 (래핑 또는 초기 측정)
+            *last_measurement = Some(PowerMeasurement {
+                energy_nj: current_energy_nj,
+                timestamp_ms: now_ms,
+            });
+            None
+        }
+    } else {
+        // 첫 측정
+        *last_measurement = Some(PowerMeasurement {
+            energy_nj: current_energy_nj,
+            timestamp_ms: now_ms,
+        });
+        None
+    }
+}
+
+/// RAPL 전력 측정 초기화
+pub fn init_rapl_measurement() {
+    let mut last_measurement = LAST_POWER_MEASUREMENT.lock();
+    
+    if msr_supported() {
+        if let (Some(energy_unit_nj), Some(energy_status)) = (
+            read_energy_unit_nanojoules(),
+            read_package_energy_status(),
+        ) {
+            let current_energy_nj = (energy_status as u64).wrapping_mul(energy_unit_nj);
+            *last_measurement = Some(PowerMeasurement {
+                energy_nj: current_energy_nj,
+                timestamp_ms: crate::drivers::timer::get_milliseconds(),
+            });
+            crate::log_info!("RAPL power measurement initialized");
+        } else {
+            crate::log_warn!("RAPL MSR not available on this CPU");
+        }
+    }
 }
 
 

@@ -13,6 +13,7 @@ mod numbers;
 mod handler;
 mod dispatcher;
 mod implementations;
+mod validation;
 
 pub use numbers::SyscallNumber;
 pub use handler::init_syscall_handler;

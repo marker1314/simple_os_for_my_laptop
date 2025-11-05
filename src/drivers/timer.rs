@@ -94,10 +94,65 @@ pub extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: x86_64::stru
     
     // 스케줄러 틱 처리
     // TODO: 컨텍스트 스위칭이 필요하면 여기서 처리
-    crate::scheduler::tick();
+    let context_switch_needed = crate::scheduler::tick();
+    
+    // Wakeup 이벤트 기록 (C-State 추적용)
+    if context_switch_needed {
+        // 컨텍스트 스위칭이 발생하면 wakeup으로 간주
+        if let Some(pm) = crate::power::get_manager() {
+            if let Some(manager) = pm.lock().as_mut() {
+                // Idle manager는 PowerManager 내부에 있으므로 직접 접근 불가
+                // 대신 전역 함수를 통해 wakeup 기록
+                crate::power::cpu_usage::update_cpu_usage();
+            }
+        }
+    }
     
     // Watchdog 체크
     crate::kernel::watchdog::check();
+    
+    // 인터럽트 메트릭 기록
+    crate::monitoring::record_interrupt();
+    
+    // CPU 온도 모니터링 (주기적 체크)
+    // 1초마다 체크 (1000 틱마다)
+    let tick_count = *TICK_COUNT.lock();
+    if tick_count % 1000 == 0 {
+        crate::power::temps::periodic_thermal_check();
+        
+        // 메모리 단편화 통계 업데이트 (1초마다)
+        crate::memory::fragmentation::update_fragmentation_stats();
+        
+        // 압축된 페이지 정리 (1분마다, 60000 틱)
+        if tick_count % 60000 == 0 {
+            crate::memory::compression::cleanup_compressed_pages(60000); // 1분 이상 오래된 것 정리
+        }
+        
+        // 프레임 캐시 정리 (1분마다)
+        if tick_count % 60000 == 0 {
+            crate::memory::frame_cache::cleanup_cache(60000);
+        }
+        
+        // OOM Killer 체크 (5초마다, 5000 틱)
+        if tick_count % 5000 == 0 {
+            if crate::memory::oom_killer::check_oom() {
+                let killed = crate::memory::oom_killer::try_kill_oom();
+                if killed > 0 {
+                    crate::log_warn!("OOM Killer activated: {} thread(s) terminated", killed);
+                }
+            }
+            
+            // 사용자 활동 기반 전원 관리 조정 (5초마다)
+            if let Err(e) = crate::power::user_activity::adjust_power_based_on_activity() {
+                crate::log_debug!("Failed to adjust power based on activity: {:?}", e);
+            }
+            
+            // 배터리 수준 기반 전원 관리 조정 (5초마다)
+            if let Err(e) = crate::power::battery::adjust_power_based_on_battery() {
+                crate::log_debug!("Failed to adjust power based on battery: {:?}", e);
+            }
+        }
+    }
     
     // PIC에 인터럽트 종료 신호 전송 (IRQ 0)
     unsafe {

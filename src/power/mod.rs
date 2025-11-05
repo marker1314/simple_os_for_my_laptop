@@ -14,9 +14,11 @@ pub mod scaling;
 pub mod policy;
 pub mod idle;
 pub mod device;
+pub mod device_policy;
 pub mod stats;
 pub mod rapl;
 pub mod temps;
+pub mod cpu_usage;
 
 pub use manager::PowerManager;
 pub use policy::{PowerPolicy, PowerMode};

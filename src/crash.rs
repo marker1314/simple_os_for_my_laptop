@@ -148,6 +148,30 @@ pub fn take() -> Option<CrashDump> {
     }
 }
 
+/// Export crash dump to CSV format for analysis
+pub fn export_crash_dump_csv(dump: &CrashDump) {
+    let reason_str = match dump.reason {
+        1 => "PANIC",
+        2 => "EXCEPTION",
+        _ => "UNKNOWN",
+    };
+    
+    crate::serial_println!("crash_dump.csv");
+    crate::serial_println!("reason,code,rip,rbp,stack_trace_len");
+    crate::serial_println!("{},{},0x{:016x},0x{:016x},{}", reason_str, dump.code, dump.rip, dump.rbp, dump.stack_trace_len);
+    
+    if dump.stack_trace_len > 0 {
+        crate::serial_println!("\nstack_trace.csv");
+        crate::serial_println!("frame,address");
+        for i in 0..dump.stack_trace_len as usize {
+            let addr = dump.stack_trace[i];
+            if addr != 0 {
+                crate::serial_println!("{},0x{:016x}", i, addr);
+            }
+        }
+    }
+}
+
 /// Print a symbolized crash dump
 pub fn print_crash_dump(dump: &CrashDump) {
     let reason_str = match dump.reason {
@@ -156,20 +180,68 @@ pub fn print_crash_dump(dump: &CrashDump) {
         _ => "UNKNOWN",
     };
     
+    let exception_name = match dump.code {
+        0x00 => "Divide Error",
+        0x01 => "Debug",
+        0x02 => "Non-Maskable Interrupt",
+        0x03 => "Breakpoint",
+        0x04 => "Overflow",
+        0x05 => "Bound Range Exceeded",
+        0x06 => "Invalid Opcode",
+        0x07 => "Device Not Available",
+        0x08 => "Double Fault",
+        0x09 => "Coprocessor Segment Overrun",
+        0x0A => "Invalid TSS",
+        0x0B => "Segment Not Present",
+        0x0C => "Stack Segment Fault",
+        0x0D => "General Protection Fault",
+        0x0E => "Page Fault",
+        0x10 => "x87 Floating Point",
+        0x11 => "Alignment Check",
+        0x12 => "Machine Check",
+        0x13 => "SIMD Floating Point",
+        0x14 => "Virtualization",
+        0x1E => "Security",
+        _ => "Unknown Exception",
+    };
+    
     crate::log_error!("=== Crash Dump ===");
     crate::log_error!("Reason: {} (code: 0x{:x})", reason_str, dump.code);
+    if dump.reason == 2 {
+        crate::log_error!("Exception: {}", exception_name);
+    }
     crate::log_error!("RIP: 0x{:016x}", dump.rip);
     crate::log_error!("RBP: 0x{:016x}", dump.rbp);
+    
+    // Try to identify function from RIP (simplified symbol resolution)
+    // In a real implementation, this would use a symbol table
+    let rip_addr = dump.rip;
+    let kernel_base = 0xFFFF800000000000u64;
+    if rip_addr >= kernel_base && rip_addr < 0xFFFFFFFFFFFFFFFFu64 {
+        let offset = rip_addr - kernel_base;
+        crate::log_error!("RIP offset: 0x{:016x} (from kernel base)", offset);
+        crate::log_error!("Note: Use objdump or addr2line to resolve symbols:");
+        crate::log_error!("  addr2line -e target/x86_64-unknown-none/debug/simple_os 0x{:016x}", offset);
+    }
     
     if dump.stack_trace_len > 0 {
         crate::log_error!("Stack Trace ({} frames):", dump.stack_trace_len);
         for i in 0..dump.stack_trace_len as usize {
             let addr = dump.stack_trace[i];
             if addr != 0 {
-                crate::log_error!("  #{}: 0x{:016x}", i, addr);
+                let offset = if addr >= kernel_base {
+                    addr - kernel_base
+                } else {
+                    0
+                };
+                crate::log_error!("  #{}: 0x{:016x} (offset: 0x{:016x})", i, addr, offset);
             }
         }
+        crate::log_error!("To symbolize: addr2line -e target/x86_64-unknown-none/debug/simple_os -a -f -C <addresses>");
     }
+    
+    // Additional context
+    crate::log_error!("Timestamp: {}ms", crate::drivers::timer::get_milliseconds());
     crate::log_error!("==================");
 }
 
