@@ -143,7 +143,7 @@ impl CpuScaling {
                 // 점진적 증가
                 self.current_p_state.saturating_sub(1)
             }
-        } else if cpu_usage_percent < 20.saturating_sub(HYSTERESIS_THRESHOLD) {
+        } else if cpu_usage_percent < 20u8.saturating_sub(HYSTERESIS_THRESHOLD) {
             // 낮은 사용률: 절전 모드
             if self.last_cpu_usage >= 20 {
                 // 이전에 높은 사용률이었으면 즉시 전환
@@ -284,47 +284,19 @@ enum Vendor { Intel, Amd, Other }
 #[inline]
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 fn cpuid_vendor_and_est() -> (Vendor, bool) {
-    let mut eax: u32;
-    let mut ebx: u32;
-    let mut ecx: u32;
-    let mut edx: u32;
-    unsafe {
-        core::arch::asm!(
-            "cpuid",
-            inlateout("eax") 0u32 => eax,
-            out("ebx") ebx,
-            out("ecx") ecx,
-            out("edx") edx,
-            options(nostack, preserves_flags)
-        );
-    }
+    let v0 = unsafe { core::arch::x86_64::__cpuid(0) };
     let mut vendor_bytes = [0u8; 12];
-    vendor_bytes[0..4].copy_from_slice(&ebx.to_le_bytes());
-    vendor_bytes[4..8].copy_from_slice(&edx.to_le_bytes());
-    vendor_bytes[8..12].copy_from_slice(&ecx.to_le_bytes());
+    vendor_bytes[0..4].copy_from_slice(&v0.ebx.to_le_bytes());
+    vendor_bytes[4..8].copy_from_slice(&v0.edx.to_le_bytes());
+    vendor_bytes[8..12].copy_from_slice(&v0.ecx.to_le_bytes());
     let vendor = match core::str::from_utf8(&vendor_bytes).unwrap_or("") {
         "GenuineIntel" => Vendor::Intel,
         "AuthenticAMD" => Vendor::Amd,
         _ => Vendor::Other,
     };
 
-    // Leaf 1 for feature flags
-    let mut eax1: u32 = 1;
-    let mut ebx1: u32;
-    let mut ecx1: u32;
-    let mut edx1: u32;
-    unsafe {
-        core::arch::asm!(
-            "cpuid",
-            inlateout("eax") eax1 => eax1,
-            out("ebx") ebx1,
-            out("ecx") ecx1,
-            out("edx") edx1,
-            options(nostack, preserves_flags)
-        );
-    }
-    // ECX bit 7 = EST (Intel Enhanced SpeedStep Technology) on Intel
-    let est = (ecx1 & (1 << 7)) != 0;
+    let v1 = unsafe { core::arch::x86_64::__cpuid(1) };
+    let est = (v1.ecx & (1 << 7)) != 0;
     (vendor, est)
 }
 

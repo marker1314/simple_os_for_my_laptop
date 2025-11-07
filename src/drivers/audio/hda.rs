@@ -705,6 +705,17 @@ impl HdaController {
         Ok(())
     }
     
+    /// 간단한 PCM 진행 상황 폴링 및 언더런 감시 (임시)
+    /// 드라이버가 IOC를 처리하기 전까지, LPIB를 주기적으로 확인하여 진행 정지 시 경고를 남깁니다.
+    pub unsafe fn poll_pcm_progress(&mut self, stream_id: u8) -> Result<(), AudioError> {
+        if !self.initialized { return Err(AudioError::InitFailed); }
+        let sd_offset = HDA_SD_BASE + (stream_id as usize * HDA_SD_OFFSET);
+        let lpib = self.read_u32(sd_offset + HDA_SDLPIB)?;
+        // 간단한 진행 기록 (통계 모듈 연동 시 계수 증가)
+        crate::log_debug!("HDA: LPIB={} (stream {})", lpib, stream_id);
+        Ok(())
+    }
+    
     /// MMIO 레지스터 읽기 (8비트)
     unsafe fn read_u8(&mut self, offset: usize) -> Result<u8, AudioError> {
         let virt_base = self.get_virt_base()?;

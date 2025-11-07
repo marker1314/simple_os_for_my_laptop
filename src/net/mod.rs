@@ -10,6 +10,7 @@ pub mod icmp;
 pub mod udp;
 pub mod tcp;
 pub mod ethernet_frame;
+pub mod dhcp;
 #[cfg(feature = "net")]
 pub mod tls;
 #[cfg(feature = "net")]
@@ -22,4 +23,5 @@ pub use arp::{resolve_ip, handle_arp_packet};
 pub use icmp::{handle_icmp_packet, ping};
 pub use udp::{handle_udp_packet, bind as udp_bind, send_udp_packet};
 pub use tcp::{handle_tcp_packet, TcpPort, TcpFlags};
+pub use dhcp::{obtain_lease, apply_lease};
 

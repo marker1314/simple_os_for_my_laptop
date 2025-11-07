@@ -3,7 +3,7 @@
 //! 이 모듈은 파일 권한 검사 및 접근 제어를 제공합니다.
 
 use crate::fs::vfs::{FileMode, FileMetadata};
-use crate::security::user::{UserId, GroupId, get_current_uid, get_current_gid, get_user_manager};
+use crate::security::user::{UserId, GroupId, get_current_uid, get_current_gid, is_user_in_group};
 
 /// 파일 접근 권한
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,8 +56,7 @@ impl PermissionChecker {
         }
         
         // 그룹 권한 검사
-        let user_manager = get_user_manager();
-        if user_manager.lock().is_user_in_group(current_uid, file_gid) {
+        if is_user_in_group(current_uid, file_gid) {
             return Self::check_group_permission(&metadata.mode, permission);
         }
         

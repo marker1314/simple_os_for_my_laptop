@@ -2,7 +2,7 @@
 //!
 //! 이 모듈은 VGA 텍스트 모드 (80x25)를 제어하고 화면에 텍스트를 출력합니다.
 
-use volatile::Volatile;
+// Use manual volatile operations for broader compatibility
 use spin::Mutex;
 
 /// VGA 텍스트 버퍼 시작 주소
@@ -56,14 +56,14 @@ struct ScreenChar {
 
 /// VGA 텍스트 버퍼
 struct Buffer {
-    chars: [[Volatile<ScreenChar>; BUFFER_WIDTH]; BUFFER_HEIGHT],
+    chars: [[ScreenChar; BUFFER_WIDTH]; BUFFER_HEIGHT],
 }
 
 /// VGA 텍스트 모드 드라이버
 pub struct Writer {
     column_position: usize,
     color_code: ColorCode,
-    buffer: &'static mut Buffer,
+    buffer_addr: usize,
 }
 
 impl Writer {
@@ -72,7 +72,7 @@ impl Writer {
         Writer {
             column_position: 0,
             color_code: ColorCode::new(foreground_color, background_color),
-            buffer: unsafe { &mut *(VGA_BUFFER_ADDRESS as *mut Buffer) },
+            buffer_addr: VGA_BUFFER_ADDRESS,
         }
     }
 
@@ -89,10 +89,8 @@ impl Writer {
                 let col = self.column_position;
 
                 let color_code = self.color_code;
-                self.buffer.chars[row][col].write(ScreenChar {
-                    ascii_character: byte,
-                    color_code,
-                });
+                let buffer: &mut Buffer = unsafe { &mut *(self.buffer_addr as *mut Buffer) };
+                unsafe { core::ptr::write_volatile(&mut buffer.chars[row][col], ScreenChar { ascii_character: byte, color_code }); }
                 self.column_position += 1;
             }
         }
@@ -115,8 +113,9 @@ impl Writer {
         // 모든 행을 한 줄씩 위로 이동
         for row in 1..BUFFER_HEIGHT {
             for col in 0..BUFFER_WIDTH {
-                let character = self.buffer.chars[row][col].read();
-                self.buffer.chars[row - 1][col].write(character);
+                let buffer: &mut Buffer = unsafe { &mut *(self.buffer_addr as *mut Buffer) };
+                let character = unsafe { core::ptr::read_volatile(&buffer.chars[row][col]) };
+                unsafe { core::ptr::write_volatile(&mut buffer.chars[row - 1][col], character); }
             }
         }
         // 마지막 줄을 공백으로 채움
@@ -130,8 +129,9 @@ impl Writer {
             ascii_character: b' ',
             color_code: self.color_code,
         };
+        let buffer: &mut Buffer = unsafe { &mut *(self.buffer_addr as *mut Buffer) };
         for col in 0..BUFFER_WIDTH {
-            self.buffer.chars[row][col].write(blank);
+            unsafe { core::ptr::write_volatile(&mut buffer.chars[row][col], blank); }
         }
     }
 
@@ -170,7 +170,7 @@ impl core::fmt::Write for Writer {
 pub static WRITER: Mutex<Writer> = Mutex::new(Writer {
     column_position: 0,
     color_code: ColorCode((Color::LightGray as u8) | ((Color::Black as u8) << 4)),
-    buffer: unsafe { &mut *(VGA_BUFFER_ADDRESS as *mut Buffer) },
+    buffer_addr: VGA_BUFFER_ADDRESS,
 });
 
 /// VGA 초기화
@@ -193,7 +193,7 @@ pub fn newline() {
 #[macro_export]
 macro_rules! vga_print {
     ($($arg:tt)*) => {
-        use core::fmt::Write;
+        use core::fmt::Write as _;
         let _ = $crate::drivers::vga::WRITER.lock().write_fmt(format_args!($($arg)*));
     };
 }

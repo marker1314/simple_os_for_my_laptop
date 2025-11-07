@@ -62,16 +62,15 @@ impl StackCanary {
         unsafe {
             for _ in 0..10 {
                 let mut result: u64 = 0;
-                let mut carry: u8 = 0;
-                
+                let mut cf: u8;
                 core::arch::asm!(
-                    "rdrand {}",
-                    out(reg) result,
-                    out("cf") carry,
+                    "rdrand {res} ; setc {cfb}",
+                    res = out(reg) result,
+                    cfb = lateout(reg_byte) cf,
                     options(nostack, preserves_flags)
                 );
                 
-                if carry != 0 {
+                if cf != 0 {
                     return Some(result);
                 }
                 
@@ -171,7 +170,7 @@ pub unsafe fn set_stack_canary(stack_pointer: VirtAddr) -> Option<StackCanary> {
     let canary_value = canary.as_u64();
     
     // 스택 포인터 아래에 카나리 저장 (스택은 높은 주소에서 낮은 주소로 자람)
-    let canary_addr = stack_pointer - 8; // 8바이트 카나리
+    let canary_addr: VirtAddr = stack_pointer - 8u64; // 8바이트 카나리
     let canary_ptr = canary_addr.as_mut_ptr::<u64>();
     
     // 카나리 값 쓰기
@@ -201,7 +200,7 @@ pub unsafe fn verify_stack_canary(stack_pointer: VirtAddr, original_canary: &Sta
     drop(manager);
     
     // 카나리 위치에서 값 읽기
-    let canary_addr = stack_pointer - 8;
+    let canary_addr: VirtAddr = stack_pointer - 8u64;
     let canary_ptr = canary_addr.as_ptr::<u64>();
     let current_value = core::ptr::read(canary_ptr);
     let current_canary = StackCanary::from_u64(current_value);

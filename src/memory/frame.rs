@@ -7,7 +7,7 @@ use x86_64::structures::paging::{FrameAllocator, PhysFrame, PageSize, Size4KiB};
 use spin::Mutex;
 use alloc::vec::Vec;
 
-use crate::memory::map::{get as get_memory_map, MemoryType};
+use crate::memory::map::get as get_memory_map;
 
 /// 프레임 할당자 구현
 ///

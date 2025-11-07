@@ -18,8 +18,8 @@ use crate::memory::frame::BootInfoFrameAllocator;
 /// 힙 베이스 주소 및 초기/최대 크기
 pub const HEAP_START: usize = 0x_4444_4444_0000;
 const HEAP_INITIAL_SIZE: usize = 100 * 1024; // 100 KB
-const HEAP_MAX_SIZE: usize = 2 * 1024 * 1024; // 2 MB cap
-static HEAP_SIZE_BYTES: Mutex<usize> = Mutex::new(HEAP_INITIAL_SIZE);
+pub const HEAP_MAX_SIZE: usize = 2 * 1024 * 1024; // 2 MB cap
+pub(crate) static HEAP_SIZE_BYTES: Mutex<usize> = Mutex::new(HEAP_INITIAL_SIZE);
 
 /// 전역 힙 할당자
 #[global_allocator]

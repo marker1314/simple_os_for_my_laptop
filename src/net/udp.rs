@@ -24,11 +24,18 @@ struct UdpSocket {
     handler: Option<&'static mut dyn UdpSocketHandler>,
 }
 
+// Access to handlers is guarded by the global UDP_MANAGER mutex; mark Send/Sync.
+unsafe impl Send for UdpSocket {}
+unsafe impl Sync for UdpSocket {}
+
 /// UDP 소켓 관리자
 struct UdpSocketManager {
     /// 포트 -> 소켓 매핑
     sockets: BTreeMap<UdpPort, UdpSocket>,
 }
+
+unsafe impl Send for UdpSocketManager {}
+unsafe impl Sync for UdpSocketManager {}
 
 impl UdpSocketManager {
     /// 새 UDP 소켓 관리자 생성
@@ -69,7 +76,7 @@ impl UdpSocketManager {
 }
 
 /// 전역 UDP 소켓 관리자
-static UDP_MANAGER: Mutex<UdpSocketManager> = Mutex::new(UdpSocketManager::new());
+static UDP_MANAGER: Mutex<Option<UdpSocketManager>> = Mutex::new(None);
 
 /// UDP 헤더 구조
 #[repr(C, packed)]
@@ -196,7 +203,8 @@ pub fn handle_udp_packet(ip_src: Ipv4Address, packet: &PacketBuffer) -> Result<(
     
     // 소켓 관리자에 전달
     let mut manager = UDP_MANAGER.lock();
-    manager.handle_packet(ip_src, header.src_port(), header.dst_port(), data);
+    if manager.is_none() { *manager = Some(UdpSocketManager::new()); }
+    manager.as_mut().unwrap().handle_packet(ip_src, header.src_port(), header.dst_port(), data);
     
     Ok(())
 }
@@ -204,7 +212,8 @@ pub fn handle_udp_packet(ip_src: Ipv4Address, packet: &PacketBuffer) -> Result<(
 /// UDP 소켓 바인드
 pub fn bind(port: UdpPort) -> Result<(), NetworkError> {
     let mut manager = UDP_MANAGER.lock();
-    manager.bind(port)
+    if manager.is_none() { *manager = Some(UdpSocketManager::new()); }
+    manager.as_mut().unwrap().bind(port)
 }
 
 /// UDP 패킷 송신

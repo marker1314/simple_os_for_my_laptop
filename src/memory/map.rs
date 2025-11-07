@@ -5,6 +5,7 @@
 use bootloader_api::info::{MemoryRegion, MemoryRegionKind};
 use x86_64::PhysAddr;
 use spin::Mutex;
+use alloc::boxed::Box;
 
 /// 메모리 영역 타입
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

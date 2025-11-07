@@ -236,7 +236,7 @@ impl Rtl8139Driver {
         
         // 물리 주소를 가상 주소로 변환
         let boot_info = info::get();
-        let phys_offset = paging::get_physical_memory_offset(boot_info);
+        let phys_offset = paging::get_physical_memory_offset(boot_info.expect("boot info not available"));
         let virt_addr = phys_offset + phys_addr.as_u64();
         self.rx_buffer_virt = Some(virt_addr.as_mut_ptr());
         
@@ -267,7 +267,7 @@ impl Rtl8139Driver {
                 
                 // 물리 주소를 가상 주소로 변환
                 let boot_info = info::get();
-                let phys_offset = paging::get_physical_memory_offset(boot_info);
+                let phys_offset = paging::get_physical_memory_offset(boot_info.expect("boot info not available"));
                 let virt_addr = phys_offset + phys_addr.as_u64();
                 
                 desc.frame = Some(frame);

@@ -46,9 +46,9 @@ impl Default for RetryConfig {
 /// 드라이버 레벨 재시도 메커니즘
 ///
 /// 일시적인 오류에 대해 재시도를 시도합니다.
-pub fn driver_retry<F, T, E>(operation: F, config: RetryConfig) -> Result<T, E>
+pub fn driver_retry<F, T, E>(mut operation: F, config: RetryConfig) -> Result<T, E>
 where
-    F: Fn() -> Result<T, E>,
+    F: FnMut() -> Result<T, E>,
     E: Clone,
 {
     let mut last_error = None;

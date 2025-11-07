@@ -19,8 +19,17 @@ pub fn decode_pem_cert(pem: &[u8]) -> Option<Vec<u8>> {
     let s = pem;
     let head = b"-----BEGIN CERTIFICATE-----";
     let tail = b"-----END CERTIFICATE-----";
-    let start = memchr::memmem::find(s, head)? + head.len();
-    let end = memchr::memmem::find(&s[start..], tail)? + start;
+    // naive subslice search to avoid external deps
+    fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
+        if needle.is_empty() { return Some(0); }
+        for i in 0..=hay.len().saturating_sub(needle.len()) {
+            if &hay[i..i+needle.len()] == needle { return Some(i); }
+        }
+        None
+    }
+    let start = find(s, head)? + head.len();
+    let end_rel = find(&s[start..], tail)?;
+    let end = start + end_rel;
     let body = &s[start..end];
 
     // Strip whitespace

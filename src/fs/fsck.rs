@@ -7,6 +7,8 @@ use super::vfs::{FsResult, FsError};
 use super::journal::{recover, JournalEntry};
 use crate::drivers::ata::BlockDevice;
 use alloc::vec::Vec;
+use crate::fs::vfs::FileSystem;
+use alloc::boxed::Box;
 
 /// 파일시스템 오류 타입
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

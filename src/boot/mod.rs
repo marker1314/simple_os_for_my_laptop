@@ -6,6 +6,6 @@ pub mod info;
 pub mod timeline;
 pub mod hw_probe;
 
-pub use info::{init as init_boot_info, get as get_boot_info, memory_map_len, acpi_rsdp_addr};
+pub use info::{init as init_boot_info, capture_framebuffer, get as get_boot_info, memory_map_len, acpi_rsdp_addr};
 pub use timeline::{mark_boot_start, mark_stage, print_timeline, export_timeline_csv, get_total_boot_time_ms, BootStage};
 pub use hw_probe::{log_cpu_info, log_pci_summary};

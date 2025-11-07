@@ -15,7 +15,7 @@ use alloc::collections::BTreeMap;
 use crate::power::PowerError;
 
 /// 디바이스 타입
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub enum DeviceType {
     Disk,
     Network,
@@ -215,8 +215,9 @@ pub fn get_device_profile(device_type: DeviceType) -> Option<DevicePowerProfile>
 /// 디바이스 프로파일 설정
 pub fn set_device_profile(profile: DevicePowerProfile) {
     let mut manager = DEVICE_POWER_PROFILES.lock();
+    let dtype = profile.device_type();
     manager.set_profile(profile);
-    crate::log_info!("Device power profile updated: {:?}", profile.device_type());
+    crate::log_info!("Device power profile updated: {:?}", dtype);
 }
 
 /// 전력 프로파일 적용

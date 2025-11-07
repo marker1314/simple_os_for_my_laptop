@@ -88,23 +88,9 @@ impl CpuInfo {
 /// (EAX, EBX, ECX, EDX) 레지스터 값
 #[inline]
 pub fn cpuid(leaf: u32, subleaf: u32) -> (u32, u32, u32, u32) {
-    let mut eax: u32;
-    let mut ebx: u32;
-    let mut ecx: u32;
-    let mut edx: u32;
-    
-    unsafe {
-        core::arch::asm!(
-            "cpuid",
-            inout("eax") leaf => eax,
-            inout("ecx") subleaf => ecx,
-            out("ebx") ebx,
-            out("edx") edx,
-            options(nostack, preserves_flags)
-        );
-    }
-    
-    (eax, ebx, ecx, edx)
+    // Use intrinsic to avoid RBX constraints in inline asm
+    let r = unsafe { core::arch::x86_64::__cpuid_count(leaf, subleaf) };
+    (r.eax, r.ebx, r.ecx, r.edx)
 }
 
 /// CPU 기능 지원 여부 확인

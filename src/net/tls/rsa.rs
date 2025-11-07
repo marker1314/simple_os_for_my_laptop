@@ -7,6 +7,7 @@
 //! 실제 구현에는 BigInt 연산 라이브러리가 필요합니다.
 
 use crate::net::tls::TlsError;
+use alloc::vec;
 
 /// RSA 공개키
 pub struct RsaPublicKey {
@@ -267,15 +268,15 @@ impl BigInt {
         } else {
             // 기본 모듈러 지수 연산
             let mut result = BigInt::one();
-            let mut base = self.mod(modulus)?;
+            let mut base = self.r#mod(modulus)?;
             let mut exp = exp.clone();
             
             while !exp.is_zero() {
                 if exp.is_odd() {
-                    result = result.mul(&base)?.mod(modulus)?;
+                    result = result.mul(&base)?.r#mod(modulus)?;
                 }
                 exp = exp.div_two();
-                base = base.mul(&base)?.mod(modulus)?;
+                base = base.mul(&base)?.r#mod(modulus)?;
             }
             
             Ok(result)
@@ -292,7 +293,7 @@ impl BigInt {
         // 간단화: 큰 수에 대해서는 기본 알고리즘 사용
         // 실제 Montgomery 구현은 더 복잡하므로 기본 알고리즘 사용
         let mut result = BigInt::one();
-        let mut base = self.mod(modulus)?;
+        let mut base = self.r#mod(modulus)?;
         let mut exp = exp.clone();
         
         while !exp.is_zero() {
@@ -360,16 +361,16 @@ impl BigInt {
             let t_n_mod = if t_n.lt(n) {
                 t_n
             } else {
-                t_n.mod(n)?
+                t_n.r#mod(n)?
             };
             
-            let result = ab.add(&t_n_mod)?.mod(n)?;
+            let result = ab.add(&t_n_mod)?.r#mod(n)?;
             
             // R로 나누기 (시프트)
             BigInt::div_by_power_of_two(&result, k.min(32))
         } else {
             // 큰 R에 대해서는 기본 모듈러 연산 사용
-            ab.mod(n)?
+            ab.r#mod(n)?
         };
         
         Ok(r)
@@ -411,7 +412,7 @@ impl BigInt {
     }
     
     /// 모듈러 연산: self mod modulus
-    fn mod(&self, modulus: &BigInt) -> Result<BigInt, TlsError> {
+    fn r#mod(&self, modulus: &BigInt) -> Result<BigInt, TlsError> {
         if self.lt(modulus) {
             return Ok(self.clone());
         }
@@ -756,5 +757,44 @@ pub fn rsa_verify_pkcs1_v15(
     signature: &[u8],
 ) -> Result<alloc::vec::Vec<u8>, TlsError> {
     public_key.encrypt_pkcs1_v15(signature)
+}
+
+/// Verify PKCS#1 v1.5 signature block matches DigestInfo for given hash
+pub fn rsa_verify_pkcs1_v15_digest(
+    public_key: &RsaPublicKey,
+    signature: &[u8],
+    expected_digest: &[u8],
+    hash_alg: &str,
+) -> Result<bool, TlsError> {
+    // 1) RSA modular exponentiation: m = sig^e mod n (EMSA-PKCS1-v1_5 encoded)
+    let em = rsa_verify_pkcs1_v15(public_key, signature)?; // returns decrypted block bytes length = modulus size
+
+    // 2) Check 0x00 0x01 0xFF... 0x00 DigestInfo
+    if em.len() < 11 { return Ok(false); }
+    if em[0] != 0x00 || em[1] != 0x01 { return Ok(false); }
+    // find separator 0x00 after padding 0xFF
+    let mut idx = 2;
+    while idx < em.len() { if em[idx] == 0xFF { idx += 1; } else { break; } }
+    if idx >= em.len() || em[idx] != 0x00 { return Ok(false); }
+    let digest_info = &em[idx+1..];
+
+    // 3) Build expected DigestInfo DER prefix for SHA-256 or SHA-1
+    let (prefix, hash_len): (&[u8], usize) = match hash_alg {
+        "sha256" | "SHA256" => (
+            // SEQUENCE(AlgorithmIdentifier, OCTET_STRING(hash)) for SHA-256
+            // 0x30 0x31 0x30 0x0d 0x06 0x09 2.16.840.1.101.3.4.2.1 0x05 0x00 0x04 0x20
+            &[0x30,0x31,0x30,0x0d,0x06,0x09,0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x01,0x05,0x00,0x04,0x20], 32),
+        "sha1" | "SHA1" => (
+            // 0x30 0x21 0x30 0x09 0x06 0x05 1.3.14.3.2.26 0x05 0x00 0x04 0x14
+            &[0x30,0x21,0x30,0x09,0x06,0x05,0x2b,0x0e,0x03,0x02,0x1a,0x05,0x00,0x04,0x14], 20),
+        _ => (&[], expected_digest.len()),
+    };
+
+    if prefix.is_empty() { return Ok(false); }
+    if expected_digest.len() != hash_len { return Ok(false); }
+    if digest_info.len() != prefix.len() + hash_len { return Ok(false); }
+    if &digest_info[..prefix.len()] != prefix { return Ok(false); }
+    if &digest_info[prefix.len()..] != expected_digest { return Ok(false); }
+    Ok(true)
 }
 

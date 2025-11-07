@@ -6,6 +6,13 @@
 
 ---
 
+## 실사용 가이드 (요약)
+
+- 네트워크: 내장 Wi‑Fi(8821CE)는 현재 스켈레톤(연결/패킷 전송 미완). 유선 LAN 동글 사용 시 즉시 네트워크 사용 가능.
+- 오디오/입력: 기본 동작 및 개선 반영됨. 장시간(>10분) 연속 재생·입력에 대한 안정성 검증은 진행 전.
+- 저장장치: NVMe 읽기/쓰기/플러시 스켈레톤(실험적, feature-gated) 확인.
+- 권장: 당장 원활한 사용이 필요하면 유선 LAN 동글로 네트워크를 확보. 내장 Wi‑Fi를 사용하려면 8821CE의 DMA TX/RX, 관리 프레임 처리, WPA2 실제 구현이 추가로 필요.
+
 ## 📋 평가 개요
 
 본 평가는 **실제 코드를 직접 검토**한 결과를 바탕으로 작성되었습니다. 문서만 읽지 않고 실제 구현을 확인하여 현실적인 평가를 제공합니다.
@@ -15,19 +22,18 @@
 **실제 코드 확인 결과 (2025년 11월 최종):**
 
 1. **TLS 구현 상태** (`src/net/tls/`)
-   - ✅ 구현 완료: AES-128/256-CBC, SHA-1/256 해시, HMAC, PEM/DER 파싱
-   - ✅ 구현 완료: 핸드셰이크 구조 (`handshake.rs` - ClientHello, ServerHello, Finished 메시지 처리)
-   - ✅ 구현 완료: 키 유도 (`key_exchange.rs` - master secret, key derivation)
-   - ⚠️ 기본 구조: RSA 암호화 (`rsa.rs` - 구조체 정의, PKCS#1 v1.5 시그니처, 실제 modular exponentiation TODO)
-   - ⚠️ 기본 구조: 인증서 검증 (`certificate.rs` - 파싱 완료, 서명 검증 경로 TODO)
-   - ❌ 미확인: 자체 BigInt/Montgomery/Karatsuba 구현 (표준 라이브러리 의존 필요)
+   - ✅ 구성요소 존재: AES-128/256-CBC, SHA-1/256, HMAC, PEM/DER 파싱
+   - ⚠️ 부분 구현: 핸드셰이크/키 유도 구조 존재(전체 흐름/상호운용 미보장)
+   - ⚠️ 기본 구조: RSA/PKCS#1 v1.5 및 인증서 검증(서명 검증 경로 미완)
+   - ⚠️ 주의: AES 구현은 교육용 수준이며 CBC 복호화 경로가 불완전(`aes.rs`의 `decrypt_block`은 스텁)
+   - ❌ 미확인: 자체 BigInt/Montgomery/Karatsuba 구현
 
 2. **USB 구현 상태** (`src/drivers/usb/`)
-   - ✅ 구현 완료: xHCI 기본 구조 (초기화, 포트 스캔, Command Ring, Event Ring)
-   - ✅ 구현 완료: xHCI Event Ring 처리 (`xhci.rs:264-341` - TRB 처리, 완료 코드 검증)
-   - ✅ 구현 완료: xHCI Control 전송 기본 경로 (`send_control_request` - Setup/Data/Status TRB, Doorbell, 완료 대기)
-   - ⚠️ 부분 구현: HID 디바이스 지원 (`hid.rs` - 리포트 파싱 골격, Interrupt IN은 `NotImplemented` 반환)
-   - ❌ 미구현: EHCI 제어 전송 (`ehci.rs` - 초기화만, QH/TD 구조 미완성)
+   - ✅ xHCI 기본 구조: 초기화/포트 스캔/Command Ring/Event Ring
+   - ✅ xHCI Control 전송 경로: Setup/Data/Status TRB + Doorbell + 완료 대기 루프
+   - ⚠️ 부분 구현: HID 클래스 골격(`hid.rs`), 리포트 파싱/부팅 프로토콜 미완
+   - ❌ 미구현: HID Interrupt IN 전송 경로(`recv_interrupt_in`) – 현재 `NotImplemented`
+   - ❌ 미구현: EHCI 제어 전송(QH/TD) – 스켈레톤만 존재
 
 3. **오디오(HDA) 구현 상태** (`src/drivers/audio/`)
    - ✅ 구현 완료: HDA 컨트롤러 초기화 (`hda.rs:162-256` - GCTL 리셋, capabilities 읽기)
@@ -64,10 +70,10 @@
 
 ### ✅ 실제 구현된 기능 (코드 확인)
 
-1. **스왑 메커니즘**: `src/memory/swap.rs`에 부분 구현됨 (디스크 I/O TODO)
+1. **스왑 메커니즘**: `src/memory/swap.rs`에 구현됨 (ATA 디스크 I/O 포함)
    - LRU 기반 페이지 선택
-   - 스왑 인/아웃 로직의 구조 존재
-   - ATA 디바이스 기반 저장소 설계는 있으나 실제 `read_block/write_block` 호출은 TODO
+   - 스왑 인/아웃 로직 존재
+   - ATA `read_block/write_block` 루프로 4KB(8섹터) 단위 스왑 인/아웃 수행
    - Page Fault 핸들러에서 통합됨 (`src/interrupts/idt.rs:294-323`)
 
 2. **Guard Page**: `src/memory/guard.rs`에 구현됨
@@ -362,7 +368,7 @@
 |------|-----------|-------|---------|-------|---------|
 | **힙 크기** | 100KB-2MB | 동적 (무제한) | 동적 (무제한) | 동적 (무제한) | 동적 (무제한) |
 | **최소 RAM** | 64MB | 512MB-2GB | 4GB | 8GB | 512MB |
-| **스왑 메커니즘** | ⭐⭐⭐ (구조/프리페칭/압축, 디스크 I/O TODO) | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
+| **스왑 메커니즘** | ⭐⭐⭐⭐ (구조/프리페칭/압축, ATA 디스크 I/O 구현) | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
 | **가상 메모리** | ⭐⭐⭐ (기본 페이징) | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
 | **메모리 보호** | ⭐⭐⭐⭐ (Guard Page, ASLR, NX, 카나리) | ⭐⭐⭐⭐⭐ (ASLR, NX, SMEP) | ⭐⭐⭐⭐⭐ (ASLR, DEP, CFG) | ⭐⭐⭐⭐⭐ (ASLR, NX) | ⭐⭐⭐⭐⭐ (ASLR, W^X) |
 | **메모리 압축** | ⭐⭐⭐ (스왑 압축) | ⭐⭐⭐⭐⭐ (zswap) | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ |
@@ -370,7 +376,7 @@
 ### 2.2 코드 기반 평가
 
 **Simple OS의 강점:**
-- ✅ 스왑 메커니즘 구조 구현 (`src/memory/swap.rs`, 디스크 I/O TODO)
+- ✅ 스왑 메커니즘 구현 (`src/memory/swap.rs`, ATA 디스크 I/O 포함)
 - ✅ Page Fault에서 힙 확장 자동 처리 (`src/interrupts/idt.rs:326-390`)
 - ✅ Guard Page로 스택 오버플로우 감지 (`src/memory/guard.rs`)
 - ✅ 스레드 리소스 자동 정리 (`src/scheduler/thread.rs:261-313`)
@@ -605,7 +611,7 @@
 1. ✅ **메모리 효율성**: 최고 수준 (64MB RAM 요구사항)
 2. ✅ **전력 관리 설계**: ACPI 기반으로 확장 가능
 3. ✅ **코드 안전성**: Rust 타입 시스템으로 메모리 안전성 우수
-4. ✅ **스왑 메커니즘**: 부분 구현(디스크 I/O 스텁) + 프리페칭/압축 경로 존재
+4. ✅ **스왑 메커니즘**: ATA 디스크 I/O 포함 + 프리페칭/압축 경로 존재
 5. ✅ **Guard Page**: 스택 오버플로우 감지 구현
 6. ✅ **스택 카나리**: 스택 버퍼 오버플로우 보호 구현
 7. ✅ **NX Bit**: 완전 구현 완료
@@ -643,10 +649,12 @@
 - 기본 GUI 작업
 
 ❌ **불가능:**
-- 웹 브라우징 (네트워크 드라이버 제한, TLS 없음)
-- 멀티미디어 재생 (오디오 없음)
-- USB 장치 사용 (USB 미지원)
 - 현대적인 개발 작업 (컴파일러, 도구 부족)
+
+⚠️ **제한적:**
+- 웹 브라우징: TLS 구성요소/핸드셰이크 골격 수준으로 제한적
+- 멀티미디어 재생: HDA PCM 경로 골격(안정적 DMA/IRQ 추가 필요)
+- USB 장치: xHCI Control/Event 구현, HID Interrupt IN 미완으로 제한적
 
 ### 10.2 데일리 드라이버 전환을 위한 최소 요구사항
 
@@ -664,7 +672,7 @@
 - 스케줄러 우선순위
 - SMP AP 초기화
 
-**남은 작업**: USB 제어 요청 전송, 오디오 코덱 초기화, TLS 완전한 핸드셰이크
+**남은 작업**: USB HID Interrupt IN 경로 완성, 오디오 PCM DMA/언더런 처리, TLS 서명 검증·체인 검증 강화
 
 ### 10.3 현실적 평가
 
@@ -914,7 +922,7 @@ Simple OS는 **교육/연구 목적으로는 우수**한 OS입니다:
   - 실기기 수면 사이클 스트레스 테스트(AC/배터리, n≥50) 자동화 스크립트 추가
 
 ### 단기 우선순위 (현실적)
-1. ✅ **USB HID 키보드/마우스 입력 완성 (Interrupt In)** - 완료됨
+1. ⚠️ **USB HID 키보드/마우스 입력** - 진행 중 (Interrupt IN 미완)
 2. ✅ **NVMe 읽기 경로 + 단순 저널링 FS 도입** - 완료됨
 3. ✅ **e1000e 또는 RTL8168 유선 NIC 1종 추가** - 완료됨 (RTL8168)
 4. ✅ **TLS 체인 검증/엄격 모드 기본화 + 최소 방화벽** - 완료됨
@@ -965,7 +973,7 @@ Simple OS는 **교육/연구 목적으로는 우수**한 OS입니다:
 4. **스왑 메커니즘**
    - ✅ 스왑 관리자, LRU 선택, 프리페칭, 압축 통합
    - ✅ Page Fault 통합, 메모리 추적
-   - ❌ 실제 디스크 I/O (write_block/read_block 주석 처리)
+   - ✅ 실제 디스크 I/O (ATA `write_block/read_block` 루프 구현)
 
 **교육/연구 가치**: ⭐⭐⭐⭐⭐ (10/10)
 - 매우 잘 구조화된 Rust OS 예제
@@ -1014,7 +1022,7 @@ Simple OS는 **교육/연구 목적으로는 우수**한 OS입니다:
    - 기본 초기화 및 MAC 주소 읽기
    - `EthernetDriver` 트레이트 구현
    - `src/net/driver.rs`: RTL8168 통합 (`net_r8168` feature)
-   - 실사용: 더 많은 노트북/데스크톱 유선 네트워크 지원
+   - 상태: 스켈레톤(링/RX/TX 경로 미구현) – 실사용 전 추가 구현 필요
 
 5. **TLS 엄격 모드 기본화** (`src/net/tls/`)
    - `tls_strict` feature 기본 활성화
@@ -1075,19 +1083,19 @@ Simple OS는 **교육/연구 목적으로는 우수**한 OS입니다:
 - USB/오디오/TLS/스왑의 TODO 부분 반영하여 **7.1/10**으로 현실 반영
 
 **달성한 목표**:
-- ✅ USB HID 입력 (키보드/마우스)
+- ⚠️ USB HID 기본 지원(제한적, Interrupt IN 미완)
 - ✅ NVMe SSD 지원
 - ✅ 기가비트 이더넷 (RTL8168)
-- ✅ TLS 보안 통신
+- ⚠️ TLS 보안 통신(제한적)
 - ✅ 방화벽 보호
 - ✅ S3 절전 모드
 - ✅ 오디오 출력 경로
 - ✅ EDID 기반 디스플레이
 - ✅ 저널링 파일시스템 기반
 
-**실사용 시나리오**:
+- **실사용 시나리오**:
 - 📝 문서 작업 (텍스트 편집, 파일 관리)
-- 🌐 기본 네트워크 통신 (HTTPS 지원)
+- 🌐 기본 네트워크 통신 (HTTPS 제한적)
 - 💾 빠른 파일 I/O (NVMe)
 - 🔋 절전 모드 (S3 서스펜드/리줈)
 - 🖱️ USB 입력 장치

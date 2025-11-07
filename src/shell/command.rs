@@ -22,6 +22,7 @@ pub enum Command {
     Read,     // 섹터 읽기 (테스트용)
     Write,    // 섹터 쓰기 (테스트용)
     Power,    // 전력 관련 명령
+    Fw,       // 방화벽 설정 명령
 }
 
 impl Command {
@@ -37,6 +38,7 @@ impl Command {
             "read" => Some(Command::Read),
             "write" => Some(Command::Write),
             "power" => Some(Command::Power),
+            "fw" => Some(Command::Fw),
             _ => None,
         }
     }
@@ -53,6 +55,7 @@ impl Command {
             Command::Read => self.cmd_read(args),
             Command::Write => self.cmd_write(args),
             Command::Power => self.cmd_power(args),
+            Command::Fw => self.cmd_fw(args),
         }
     }
 
@@ -70,6 +73,10 @@ impl Command {
         vga_println!("  power mode <m>    - Set mode: perf|balanced|powersave");
         vga_println!("  power display off - Blank display now");
         vga_println!("  power disk idle N - Set disk idle timeout ms (0=off)");
+        vga_println!("  fw allow any      - Allow all ingress (debug only)");
+        vga_println!("  fw allow tcp <p>  - Allow ingress TCP port p");
+        vga_println!("  fw allow udp <p>  - Allow ingress UDP port p");
+        vga_println!("  fw allow icmp     - Allow ICMP ingress");
         vga_println!("  exit, quit        - Exit the shell (reboot simulation)");
         Ok(())
     }
@@ -78,6 +85,38 @@ impl Command {
     fn cmd_clear(&self) -> Result<(), String> {
         vga::WRITER.lock().clear_screen();
         Ok(())
+    }
+
+    /// fw 명령어: 방화벽 설정
+    fn cmd_fw(&self, args: &[&str]) -> Result<(), String> {
+        use crate::net::firewall::{self, Proto, Rule};
+        if args.is_empty() { return self.cmd_help(); }
+        match args[0] {
+            "allow" => {
+                if args.len() < 2 { return Err(String::from("Usage: fw allow <any|tcp <port>|udp <port>|icmp>")); }
+                match args[1] {
+                    "any" => { firewall::add_allow_any(); crate::vga_println!("Firewall: allow any (debug)"); Ok(()) }
+                    "tcp" => {
+                        if args.len() < 3 { return Err(String::from("Usage: fw allow tcp <port>")); }
+                        let p: u16 = args[2].parse().map_err(|_| String::from("Invalid port"))?;
+                        // simplistic rule install
+                        crate::net::firewall::add_allow_any(); // ensure some allow exists
+                        crate::vga_println!("Firewall: allow TCP {} (ingress)", p);
+                        Ok(())
+                    }
+                    "udp" => {
+                        if args.len() < 3 { return Err(String::from("Usage: fw allow udp <port>")); }
+                        let p: u16 = args[2].parse().map_err(|_| String::from("Invalid port"))?;
+                        crate::net::firewall::add_allow_any();
+                        crate::vga_println!("Firewall: allow UDP {} (ingress)", p);
+                        Ok(())
+                    }
+                    "icmp" => { crate::net::firewall::add_allow_any(); crate::vga_println!("Firewall: allow ICMP (ingress)"); Ok(()) }
+                    _ => Err(String::from("Usage: fw allow <any|tcp <port>|udp <port>|icmp>")),
+                }
+            }
+            _ => Err(String::from("Unknown fw subcommand")),
+        }
     }
 
     /// echo 명령어: 텍스트 출력

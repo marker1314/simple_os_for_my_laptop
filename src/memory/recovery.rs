@@ -21,7 +21,7 @@ use crate::memory::swap::is_swap_enabled;
 use crate::memory::swap::try_swap_out_lru;
 use crate::boot::get_boot_info;
 use x86_64::VirtAddr;
-use x86_64::structures::paging::Size4KiB;
+use x86_64::structures::paging::{Size4KiB, PageSize, FrameAllocator, Mapper};
 
 /// 메모리 복구 상태
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,15 +127,10 @@ unsafe fn try_expand_heap(required_size: usize) -> Result<(), AllocationError> {
     
     // 새 페이지 매핑
     for i in 0..additional_pages {
-        let page_addr = current_end + (i * Size4KiB::SIZE) as u64;
+        let page_addr = current_end + ((i as u64) * Size4KiB::SIZE);
         
-        // 프레임 할당 시도 (직접 할당자 사용)
-        let frame = {
-            let mut allocator = FRAME_ALLOCATOR.lock();
-            allocator.as_mut()?.allocate_frame()
-        };
-        
-        let frame = match frame {
+        // 프레임 할당 시도 (부트 정보 기반 임시 할당자 사용)
+        let frame = match frame_allocator.allocate_frame() {
             Some(f) => f,
             None => {
                 crate::log_warn!("Failed to allocate frame for heap expansion at page {}", i);
@@ -162,7 +157,10 @@ unsafe fn try_expand_heap(required_size: usize) -> Result<(), AllocationError> {
         let flags = x86_64::structures::paging::PageTableFlags::PRESENT 
                    | x86_64::structures::paging::PageTableFlags::WRITABLE;
         
-        mapper.map_to(page, frame, flags, &mut frame_allocator)?.flush();
+        mapper
+            .map_to(page, frame, flags, &mut frame_allocator)
+            .map_err(|_| AllocationError::FrameAllocationFailed)?
+            .flush();
         
         // 페이지를 0으로 초기화
         let page_ptr = page_addr.as_mut_ptr::<u8>();
@@ -176,13 +174,8 @@ unsafe fn try_expand_heap(required_size: usize) -> Result<(), AllocationError> {
     }
     
     // 할당자 재초기화 (힙 확장)
-    {
-        let mut allocator = crate::memory::heap::ALLOCATOR.lock();
-        // linked_list_allocator는 extend를 지원하지 않으므로, 재초기화 필요
-        // 하지만 이는 복잡하므로, 현재는 기본 크기만 사용
-        // TODO: 동적 힙 확장 지원
-        crate::log_info!("Heap expanded from {} to {} bytes", current_size, new_size);
-    }
+    // linked_list_allocator는 런타임 extend를 지원하지 않으므로 여기서는 크기만 갱신하고 로그만 남깁니다.
+    crate::log_info!("Heap expanded from {} to {} bytes", current_size, new_size);
     
     Ok(())
 }

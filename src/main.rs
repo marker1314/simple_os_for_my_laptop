@@ -37,7 +37,8 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     loop {
         // 유휴 상태에서 CPU를 대기 상태로 전환 (전력 절약)
         if let Some(pm) = simple_os::power::get_manager() {
-            if let Some(manager) = pm.lock().as_ref() {
+            let mut guard = pm.lock();
+            if let Some(manager) = guard.as_mut() {
                 unsafe { manager.enter_idle(); }
                 continue;
             }
@@ -60,7 +61,8 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
     
     // 2. 부트 정보 저장
     unsafe {
-        simple_os::boot::init_boot_info(boot_info);
+        simple_os::boot::capture_framebuffer(boot_info);
+        simple_os::boot::init_boot_info(&*boot_info);
     }
     simple_os::boot::mark_stage(simple_os::boot::BootStage::BootInfoInit);
     simple_os::log_info!("Boot info initialized");
@@ -255,14 +257,39 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
                 }
                 match simple_os::config::profile::current_profile() {
                     simple_os::config::profile::Profile::PowerSaver => {
-                        crate::drivers::rtl8139::set_idle_timeout_ms(10000);
+                        simple_os::drivers::rtl8139::set_idle_timeout_ms(10000);
                         simple_os::log_info!("Network idle timeout set to 10000ms (power_saver)");
                     }
                     _ => {}
                 }
+                // Auto DHCP bring-up (wired or once Wi‑Fi is up)
+                simple_os::net::driver::bringup_ipv4_via_dhcp();
             }
             Err(e) => {
                 simple_os::log_warn!("Failed to initialize network driver: {:?}", e);
+            }
+        }
+    }
+
+    // 15.2. Wi‑Fi 초기화 (가능한 경우)
+    #[cfg(feature = "wifi")]
+    unsafe {
+        match simple_os::drivers::wifi::init() {
+            Ok(()) => {
+                simple_os::log_info!("Wi‑Fi driver initialized (skeleton)");
+                // 연결 프로파일이 있다면 자동 스캔/연결 시도
+                if let (Some(ssid), Some(psk)) = (option_env!("SIMPLEOS_WIFI_SSID"), option_env!("SIMPLEOS_WIFI_PSK")) {
+                    simple_os::log_info!("Wi‑Fi autoconnect profile found: {}", ssid);
+                    let _ = simple_os::net::ieee80211::start_scan();
+                    let ssid_obj = simple_os::net::ieee80211::Ssid(alloc::string::String::from(ssid));
+                    let sec = simple_os::net::ieee80211::WifiSec::Wpa2Psk(alloc::string::String::from(psk));
+                    let _ = simple_os::net::ieee80211::connect(&ssid_obj, &sec);
+                } else {
+                    simple_os::log_info!("No Wi‑Fi autoconnect profile (set SIMPLEOS_WIFI_SSID/PSK at build time)");
+                }
+            }
+            Err(_e) => {
+                simple_os::log_info!("No supported Wi‑Fi device or init failed (skipping)");
             }
         }
     }
@@ -309,7 +336,7 @@ fn kernel_init(boot_info: &'static mut BootInfo) {
     // 16. 프레임버퍼 초기화 (GUI 지원)
     #[cfg(feature = "gui")]
     unsafe {
-        if let Some(framebuffer) = simple_os::boot::get_framebuffer() {
+        if let Some(framebuffer) = simple_os::boot::info::get_framebuffer() {
             simple_os::drivers::framebuffer::init(framebuffer);
             simple_os::boot::mark_stage(simple_os::boot::BootStage::FramebufferInit);
             simple_os::log_info!("Framebuffer initialized");
@@ -453,7 +480,8 @@ fn desktop_loop() -> ! {
         
         // CPU 절전
         if let Some(pm) = simple_os::power::get_manager() {
-            if let Some(manager) = pm.lock().as_ref() {
+            let mut guard = pm.lock();
+            if let Some(manager) = guard.as_mut() {
                 unsafe { manager.enter_idle(); }
             } else {
                 x86_64::instructions::hlt();
@@ -461,6 +489,9 @@ fn desktop_loop() -> ! {
         } else {
             x86_64::instructions::hlt();
         }
+        // Wi‑Fi polling tick (if enabled)
+        #[cfg(feature = "wifi")]
+        simple_os::drivers::wifi::tick();
         // 디스크 유휴 관리
         #[cfg(feature = "fs")]
         simple_os::drivers::ata::maybe_enter_idle(current_time);
@@ -483,8 +514,7 @@ fn desktop_loop() -> ! {
             }
         }
         
-        // 전력 모니터링 대시보드 업데이트 (1초마다)
-        simple_os::power::monitor::update_monitor(current_time);
+        // 전력 모니터링 대시보드 업데이트 (1초마다) - monitor 모듈 미구현으로 제거
 
         // USB HID 폴링 (임시, Interrupt IN 구현 전 보완)
         #[cfg(feature = "usb")]

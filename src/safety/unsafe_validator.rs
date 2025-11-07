@@ -201,10 +201,12 @@ impl HardwareValidator {
         let phys_offset = {
             use crate::memory::paging;
             let guard = paging::PHYSICAL_MEMORY_OFFSET.lock();
-            guard.unwrap_or(0)
+            guard.unwrap_or(paging::get_physical_memory_offset(
+                crate::boot::get_boot_info().expect("boot info").into()
+            ))
         };
         
-        phys_offset + self.phys_addr
+        (phys_offset.as_u64()) + self.phys_addr
     }
 }
 
@@ -279,7 +281,7 @@ impl Default for UnsafeStats {
 }
 
 /// 전역 unsafe 통계
-static UNSAFE_STATS: spin::Mutex<UnsafeStats> = spin::Mutex::new(UnsafeStats::new());
+static UNSAFE_STATS: spin::Mutex<UnsafeStats> = spin::Mutex::new(UnsafeStats { total_blocks: 0, validated_blocks: 0, type_counts: [0; 6] });
 
 /// Unsafe 블록 통계 기록
 pub fn record_unsafe_block(block_type: UnsafeBlockType, validated: bool) {

@@ -4,6 +4,7 @@
 
 use crate::net::ethernet::{PacketBuffer, NetworkError};
 use core::fmt;
+use spin::Mutex;
 
 /// IPv4 주소 (4바이트)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -36,6 +37,20 @@ impl Ipv4Address {
     pub fn is_localhost(&self) -> bool {
         *self == Self::LOCALHOST
     }
+}
+
+/// Global (temporary) assigned IPv4 address storage
+static ASSIGNED_IPV4: Mutex<Ipv4Address> = Mutex::new(Ipv4Address::UNSPECIFIED);
+
+/// Apply assigned IPv4 address (e.g., from DHCP)
+pub fn apply_assigned_ipv4(addr: Ipv4Address) {
+    *ASSIGNED_IPV4.lock() = addr;
+    crate::log_info!("IP: assigned IPv4 {}", addr);
+}
+
+/// Get current assigned IPv4 address or UNSPECIFIED
+pub fn current_ipv4() -> Ipv4Address {
+    *ASSIGNED_IPV4.lock()
 }
 
 impl fmt::Display for Ipv4Address {
@@ -377,9 +392,8 @@ pub fn handle_ip_packet(packet: &PacketBuffer) -> Result<(), NetworkError> {
         return Err(NetworkError::InvalidPacket);
     }
     
-    // 로컬 IP 주소 확인 (임시로 하드코딩)
-    // TODO: 네트워크 인터페이스 설정에서 가져오기
-    let local_ip = Ipv4Address([192, 168, 1, 100]);
+    // 로컬 IP 주소 확인 (DHCP/수동 적용값 사용, 기본 UNSPECIFIED)
+    let local_ip = current_ipv4();
     
     // 패킷이 우리에게 오는 것인지 확인
     if ip_packet.header.dst_addr() != local_ip 
@@ -433,9 +447,8 @@ pub fn send_ip_packet(
     protocol: IpProtocol,
     payload: &[u8],
 ) -> Result<(), NetworkError> {
-    // 로컬 IP 주소 (임시로 하드코딩)
-    // TODO: 네트워크 인터페이스 설정에서 가져오기
-    let src_ip = Ipv4Address([192, 168, 1, 100]);
+    // 로컬 IP 주소 (DHCP/수동 적용값 사용)
+    let src_ip = current_ipv4();
     
     // IP 패킷 생성
     let mut ip_buffer = PacketBuffer::new();

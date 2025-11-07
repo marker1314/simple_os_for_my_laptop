@@ -12,9 +12,10 @@ use x86_64::structures::paging::{PhysFrame, Size4KiB};
 use x86_64::VirtAddr;
 use spin::Mutex;
 use alloc::vec::Vec;
+use alloc::vec;
 use alloc::collections::BTreeMap;
 
-use crate::memory::frame::FRAME_ALLOCATOR;
+// Do not access private FRAME_ALLOCATOR here; compression doesn't need it.
 
 /// 압축된 페이지 엔트리
 #[derive(Debug, Clone)]

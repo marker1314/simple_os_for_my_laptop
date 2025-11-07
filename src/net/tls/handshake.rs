@@ -11,6 +11,7 @@ use crate::net::tls::certificate::TlsCertificate;
 use crate::net::tls::key_exchange::{KeyMaterial, generate_premaster_secret, compute_master_secret, derive_keys, compute_finished_hash};
 use crate::net::tls::rsa::{RsaPublicKey, rsa_encrypt_pkcs1_v15};
 use alloc::vec::Vec;
+use alloc::vec;
 
 /// TLS 핸드셰이크 타입
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -428,7 +429,7 @@ impl TlsConnection {
             key_material.client_write_key.clone(),
             key_material.client_write_mac_key.clone(),
             key_material.client_write_iv,
-        )?;
+        ).map_err(|_| TlsError::HandshakeFailed)?;
         
         self.cipher = Some(cipher);
         

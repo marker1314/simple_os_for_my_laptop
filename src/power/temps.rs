@@ -6,24 +6,9 @@ const MSR_IA32_THERM_STATUS: u32 = 0x19C;
 
 #[inline]
 fn msr_supported() -> bool {
-    let eax: u32 = 1; // CPUID leaf 1
-    let mut eax_out: u32 = 0;
-    let mut ebx_out: u32 = 0;
-    let mut ecx_out: u32 = 0;
-    let mut edx_out: u32 = 0;
-    unsafe {
-        core::arch::asm!(
-            "cpuid",
-            in("eax") eax,
-            out("eax") eax_out,
-            out("ebx") ebx_out,
-            out("ecx") ecx_out,
-            out("edx") edx_out,
-            options(nostack, preserves_flags)
-        );
-    }
+    let r = unsafe { core::arch::x86_64::__cpuid(1) };
     // EDX bit 5 indicates MSR support
-    (edx_out & (1 << 5)) != 0
+    (r.edx & (1 << 5)) != 0
 }
 
 #[inline]

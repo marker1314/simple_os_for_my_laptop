@@ -179,20 +179,8 @@ impl AslrState {
         }
         
         // 3. CPU ID 및 기타 하드웨어 정보
-        let mut eax: u32 = 0;
-        let mut ebx: u32 = 0;
-        let mut ecx: u32 = 0;
-        let mut edx: u32 = 0;
-        
-        // CPUID로 하드웨어 정보 수집
-        core::arch::asm!(
-            "cpuid",
-            inout("eax") 0u32 => eax,
-            out("ebx") ebx,
-            out("ecx") ecx,
-            out("edx") edx,
-            options(nostack, preserves_flags)
-        );
+        let cp = unsafe { core::arch::x86_64::__cpuid(0) };
+        let eax = cp.eax; let ebx = cp.ebx; let ecx = cp.ecx; let edx = cp.edx;
         
         let cpu_info = [
             eax.to_le_bytes(),
@@ -235,17 +223,16 @@ impl AslrState {
             // 최대 10번 재시도
             for _ in 0..10 {
                 let mut result: u64 = 0;
-                let mut carry: u8 = 0;
-                
-                // RDRAND는 CF 플래그로 성공 여부 표시
+                let mut cf: u8;
+                // RDRAND는 CF 플래그로 성공 여부 표시: setc로 CF를 변수에 저장
                 core::arch::asm!(
-                    "rdrand {}",
-                    out(reg) result,
-                    out("cf") carry,
+                    "rdrand {res} ; setc {cfb}",
+                    res = out(reg) result,
+                    cfb = lateout(reg_byte) cf,
                     options(nostack, preserves_flags)
                 );
                 
-                if carry != 0 {
+                if cf != 0 {
                     return Some(result);
                 }
                 
@@ -260,20 +247,8 @@ impl AslrState {
     /// RDRAND 지원 여부 확인 (CPUID)
     fn is_rdrand_supported() -> bool {
         unsafe {
-            let mut eax: u32 = 1;
-            let mut ecx: u32 = 0;
-            
-            core::arch::asm!(
-                "cpuid",
-                inout("eax") eax => _,
-                out("ebx") _,
-                out("ecx") ecx,
-                out("edx") _,
-                options(nostack, preserves_flags)
-            );
-            
-            // ECX bit 30 = RDRAND 지원
-            (ecx & (1 << 30)) != 0
+            let r = core::arch::x86_64::__cpuid(1);
+            (r.ecx & (1 << 30)) != 0
         }
     }
     

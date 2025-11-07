@@ -61,7 +61,7 @@ impl ArpTable {
 }
 
 /// 전역 ARP 테이블
-static ARP_TABLE: Mutex<ArpTable> = Mutex::new(ArpTable::new());
+static ARP_TABLE: Mutex<Option<ArpTable>> = Mutex::new(None);
 
 /// ARP 하드웨어 타입
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -297,7 +297,8 @@ pub fn handle_arp_packet(packet: &PacketBuffer) -> Result<(), NetworkError> {
     
     // ARP 테이블 업데이트
     let mut arp_table = ARP_TABLE.lock();
-    arp_table.insert(header.sender_ip(), header.sender_mac());
+    if arp_table.is_none() { *arp_table = Some(ArpTable::new()); }
+    arp_table.as_mut().unwrap().insert(header.sender_ip(), header.sender_mac());
     
     // 로컬 IP 주소 (임시로 하드코딩)
     // TODO: 네트워크 인터페이스 설정에서 가져오기
@@ -348,9 +349,10 @@ pub fn handle_arp_packet(packet: &PacketBuffer) -> Result<(), NetworkError> {
 /// 없으면 ARP 요청을 전송합니다.
 pub fn resolve_ip(ip: Ipv4Address) -> Option<MacAddress> {
     let mut arp_table = ARP_TABLE.lock();
+    if arp_table.is_none() { *arp_table = Some(ArpTable::new()); }
     
     // 먼저 테이블에서 확인
-    if let Some(mac) = arp_table.resolve(ip) {
+    if let Some(mac) = arp_table.as_mut().unwrap().resolve(ip) {
         return Some(mac);
     }
     

@@ -629,6 +629,79 @@ impl UsbHostController for XhciController {
         Ok(())
     }
     
+    /// Interrupt IN 전송을 통해 엔드포인트에서 데이터를 수신합니다.
+    ///
+    /// 간단 구현: Command Ring에 Normal TRB를 게시하고 해당 EP Doorbell을 울린 뒤
+    /// Event Ring에서 완료 코드를 폴링합니다. 실제 xHCI에서는 각 EP별 Transfer Ring이
+    /// 필요하지만, 본 구현은 단순화를 위해 동일 링을 재사용합니다.
+    pub unsafe fn recv_interrupt_in(
+        &mut self,
+        endpoint_address: u8,
+        data_buffer: *mut u8,
+        data_length: u16,
+    ) -> Result<(), UsbError> {
+        if !self.initialized {
+            return Err(UsbError::NotInitialized);
+        }
+        if data_buffer.is_null() || data_length == 0 {
+            return Err(UsbError::InvalidParam);
+        }
+
+        let command_ring = self.command_ring.as_mut().ok_or(UsbError::DeviceError)?;
+
+        // 버퍼의 물리 주소 계산 (정적 매핑 가정)
+        let phys_offset = get_physical_memory_offset(crate::boot::get_boot_info());
+        let virt_addr = data_buffer as u64;
+        let data_buffer_phys = virt_addr.saturating_sub(phys_offset.as_u64());
+
+        // Normal Transfer TRB (IN) – 길이 만큼 읽기, 완료 시 인터럽트 요청
+        let in_trb = Trb::new_normal_transfer(
+            data_buffer_phys,
+            data_length as u32,
+            true,
+        );
+        command_ring.add_trb(in_trb)?;
+
+        // Doorbell: Slot 0, 대상 엔드포인트 번호 (하위 4비트)
+        let ep_num = (endpoint_address & 0x0F) as u32;
+        let doorbell_offset = 0x800; // Slot 0 Doorbell
+        self.write_u32(self.runtime_base as usize + doorbell_offset, ep_num);
+
+        // Event Ring 완료 대기
+        let event_ring = self.event_ring.as_mut().ok_or(UsbError::DeviceError)?;
+        let mut timeout = 10000;
+        while timeout > 0 {
+            timeout -= 1;
+            if let Some(event_trb) = event_ring.read_event() {
+                let trb_type = ((event_trb.control >> 4) & 0x3F) as u8;
+                if trb_type == 32 { // Transfer Event
+                    let completion_code = ((event_trb.parameter2 >> 24) & 0xFF) as u8;
+                    // 0x01: Success, 0x13: Short Packet 등 일부 정상 코드 허용
+                    if completion_code == 0x01 || completion_code == 0x13 || completion_code == 0x00 {
+                        // ERDP 업데이트
+                        let erdp = event_ring.dequeue_pointer();
+                        let erdp_low = (erdp.as_u64() & 0xFFFF_FFFF) as u32;
+                        let erdp_high = ((erdp.as_u64() >> 32) & 0xFFFF_FFFF) as u32;
+                        self.write_u32(self.interrupter_base as usize + XHCI_ERDP, erdp_low);
+                        self.write_u32(self.interrupter_base as usize + XHCI_ERDP + 4, erdp_high);
+                        return Ok(());
+                    } else {
+                        crate::log_warn!("xHCI: Interrupt IN completion code: 0x{:02X}", completion_code);
+                    }
+                }
+                // ERDP 갱신 (이벤트 소비)
+                let erdp = event_ring.dequeue_pointer();
+                let erdp_low = (erdp.as_u64() & 0xFFFF_FFFF) as u32;
+                let erdp_high = ((erdp.as_u64() >> 32) & 0xFFFF_FFFF) as u32;
+                self.write_u32(self.interrupter_base as usize + XHCI_ERDP, erdp_low);
+                self.write_u32(self.interrupter_base as usize + XHCI_ERDP + 4, erdp_high);
+            }
+            core::hint::spin_loop();
+        }
+
+        Err(UsbError::Timeout)
+    }
+
     /// USB 제어 요청 전송
     ///
     /// # Arguments

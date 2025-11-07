@@ -7,6 +7,7 @@ use super::vfs::{FileSystem, File, Directory, FileMetadata, FileType, FileMode, 
 use super::journal::{begin_transaction, add_entry, commit, checkpoint, rollback, JournalEntryType};
 use crate::drivers::ata::{BlockDevice, BlockDeviceError};
 use alloc::vec::Vec;
+use alloc::string::ToString;
 use alloc::string::String;
 use alloc::boxed::Box;
 use core::mem::size_of;
@@ -255,6 +256,11 @@ impl Fat32FileSystem {
             boot_sector,
             mounted: false,
         })
+    }
+
+    /// 부트 섹터 참조 반환 (검사용)
+    pub fn boot_sector(&self) -> &Fat32BootSector {
+        &self.boot_sector
     }
     
     /// FAT 엔트리 읽기
@@ -575,7 +581,7 @@ impl Fat32FileSystem {
     /// 
     /// # Returns
     /// (디렉토리 클러스터, 파일명)
-    fn split_path(&mut self, path: &str) -> FsResult<(u32, &str)> {
+    fn split_path<'a>(&mut self, path: &'a str) -> FsResult<(u32, &'a str)> {
         let path = path.trim_start_matches('/');
         if path.is_empty() {
             return Ok((self.boot_sector.root_cluster(), ""));
@@ -691,7 +697,7 @@ impl Fat32FileSystem {
     ///
     /// # Returns
     /// (부모 경로, 파일명)
-    fn split_path<'a>(&self, path: &'a str) -> FsResult<(&'a str, &'a str)> {
+    fn split_parent_path<'a>(&self, path: &'a str) -> FsResult<(&'a str, &'a str)> {
         let path = path.trim_start_matches('/').trim_end_matches('/');
         if path.is_empty() {
             return Err(FsError::InvalidPath);
@@ -844,10 +850,8 @@ impl Fat32FileSystem {
             // 빈 엔트리 찾기
             let num_entries = cluster_size / size_of::<Fat32DirEntry>();
             for i in 0..num_entries {
-                let entry_ptr = dir_buf.as_ptr().add(i * size_of::<Fat32DirEntry>());
-                let existing_entry = unsafe {
-                    core::ptr::read(entry_ptr as *const Fat32DirEntry)
-                };
+                let entry_ptr = unsafe { dir_buf.as_ptr().add(i * size_of::<Fat32DirEntry>()) };
+                let existing_entry = unsafe { core::ptr::read(entry_ptr as *const Fat32DirEntry) };
                 
                 if existing_entry.is_deleted() || existing_entry.name[0] == 0 {
                     // 빈 엔트리 발견
@@ -932,7 +936,7 @@ impl FileSystem for Fat32FileSystem {
         }
         
         Ok(Box::new(Fat32File {
-            filesystem: self,
+            filesystem: self as *mut Fat32FileSystem,
             entry,
             cluster,
             offset: 0,
@@ -945,14 +949,15 @@ impl FileSystem for Fat32FileSystem {
         }
         
         // 경로 분리
-        let (dir_cluster, filename) = self.split_path(path)?;
+        let (dir_cluster, filename_ref) = self.split_path(path)?;
+        let filename_owned = filename_ref.to_string();
         
-        if filename.is_empty() {
+        if filename_ref.is_empty() {
             return Err(FsError::InvalidPath);
         }
         
         // 파일이 이미 존재하는지 확인
-        match self.find_directory_entry(dir_cluster, filename) {
+        match self.find_directory_entry(dir_cluster, &filename_owned) {
             Ok(_) => return Err(FsError::AlreadyExists),
             Err(FsError::NotFound) => {},
             Err(e) => return Err(e),
@@ -968,7 +973,7 @@ impl FileSystem for Fat32FileSystem {
         self.write_cluster_direct(first_cluster, &empty_cluster)?;
         
         // 디렉토리 엔트리 생성
-        let name_8_3 = Self::name_to_8_3(filename);
+        let name_8_3 = Self::name_to_8_3(&filename_owned);
         let entry = Fat32DirEntry {
             name: name_8_3,
             attributes: 0, // 일반 파일
@@ -1007,9 +1012,11 @@ impl FileSystem for Fat32FileSystem {
             return Err(FsError::NotADirectory);
         }
         
+        let root_cluster = self.boot_sector.root_cluster();
+        let resolved_cluster = if cluster == 0 { root_cluster } else { cluster };
         Ok(Box::new(Fat32Directory {
-            filesystem: self,
-            cluster: if cluster == 0 { self.boot_sector.root_cluster() } else { cluster },
+            filesystem: self as *mut Fat32FileSystem,
+            cluster: resolved_cluster,
         }))
     }
     
@@ -1126,7 +1133,7 @@ impl FileSystem for Fat32FileSystem {
         }
         
         // 경로에서 부모 디렉토리와 파일명 분리
-        let (parent_path, filename) = self.split_path(path)?;
+        let (parent_path, filename) = self.split_parent_path(path)?;
         let (parent_cluster, _) = self.path_to_cluster(parent_path)?;
         let (file_cluster, entry) = self.path_to_cluster(path)?;
         
@@ -1152,8 +1159,8 @@ impl FileSystem for Fat32FileSystem {
         }
         
         // 기존 파일 정보 가져오기
-        let (old_parent_path, old_filename) = self.split_path(old_path)?;
-        let (new_parent_path, new_filename) = self.split_path(new_path)?;
+        let (old_parent_path, old_filename) = self.split_parent_path(old_path)?;
+        let (new_parent_path, new_filename) = self.split_parent_path(new_path)?;
         
         let (old_parent_cluster, _) = self.path_to_cluster(old_parent_path)?;
         let (new_parent_cluster, _) = self.path_to_cluster(new_parent_path)?;
@@ -1197,6 +1204,8 @@ impl FileSystem for Fat32FileSystem {
             created: 0, // TODO: 날짜/시간 변환
             modified: 0,
             accessed: 0,
+            uid: 0,
+            gid: 0,
         })
     }
     
@@ -1206,14 +1215,19 @@ impl FileSystem for Fat32FileSystem {
 }
 
 /// FAT32 파일 핸들
-struct Fat32File<'a> {
-    filesystem: &'a mut Fat32FileSystem,
+struct Fat32File {
+    filesystem: *mut Fat32FileSystem,
     entry: Fat32DirEntry,
     cluster: u32,
     offset: Offset,
 }
 
-impl File for Fat32File<'_> {
+// Safety: Fat32File uses a raw pointer to the filesystem owned by the FS layer.
+// Accesses are serialized by the higher-level filesystem locks; mark as Send/Sync.
+unsafe impl Send for Fat32File {}
+unsafe impl Sync for Fat32File {}
+
+impl File for Fat32File {
     fn read(&mut self, buf: &mut [u8], offset: Option<Offset>) -> FsResult<usize> {
         let read_offset = offset.unwrap_or(self.offset);
         if read_offset < 0 {
@@ -1227,7 +1241,8 @@ impl File for Fat32File<'_> {
             return Ok(0);
         }
         
-        let cluster_size = self.filesystem.boot_sector.sectors_per_cluster as usize * 512;
+        let fs = unsafe { &mut *self.filesystem };
+        let cluster_size = fs.boot_sector.sectors_per_cluster as usize * 512;
         let mut cluster_buf = alloc::vec![0u8; cluster_size];
         let mut current_offset = read_offset;
         let mut bytes_read = 0;
@@ -1235,10 +1250,10 @@ impl File for Fat32File<'_> {
         
         while current_offset < file_size && bytes_read < max_read {
             // 현재 오프셋에 해당하는 클러스터 찾기
-            let (cluster, cluster_offset) = self.filesystem.find_cluster_for_offset(self.cluster, current_offset)?;
+            let (cluster, cluster_offset) = fs.find_cluster_for_offset(self.cluster, current_offset)?;
             
             // 클러스터 읽기
-            self.filesystem.read_single_cluster(cluster, &mut cluster_buf)?;
+            fs.read_single_cluster(cluster, &mut cluster_buf)?;
             
             // 버퍼에 복사할 데이터 길이 계산
             let available_in_cluster = cluster_size - cluster_offset;
@@ -1270,7 +1285,8 @@ impl File for Fat32File<'_> {
         }
         
         let write_offset = write_offset as usize;
-        let cluster_size = self.filesystem.boot_sector.sectors_per_cluster as usize * 512;
+        let fs = unsafe { &mut *self.filesystem };
+        let cluster_size = fs.boot_sector.sectors_per_cluster as usize * 512;
         let mut bytes_written = 0;
         let mut current_offset = write_offset;
         
@@ -1278,7 +1294,7 @@ impl File for Fat32File<'_> {
             // 현재 오프셋에 해당하는 클러스터 찾기 또는 할당
             let (cluster, cluster_offset) = if current_offset < self.entry.file_size as usize {
                 // 기존 클러스터 사용
-                self.filesystem.find_cluster_for_offset(self.cluster, current_offset)?
+                fs.find_cluster_for_offset(self.cluster, current_offset)?
             } else {
                 // 새 클러스터 할당 필요
                 let last_cluster = if self.entry.file_size == 0 {
@@ -1287,7 +1303,7 @@ impl File for Fat32File<'_> {
                     // 마지막 클러스터 찾기
                     let mut cluster = self.cluster;
                     loop {
-                        let next = self.filesystem.read_fat_entry(cluster)?;
+                        let next = fs.read_fat_entry(cluster)?;
                         if next >= 0x0FFFFFF8 {
                             break;
                         }
@@ -1297,22 +1313,22 @@ impl File for Fat32File<'_> {
                 };
                 
                 // 새 클러스터 할당
-                let new_cluster = self.filesystem.find_free_cluster()?;
+                let new_cluster = fs.find_free_cluster()?;
                 if self.entry.file_size == 0 {
                     // 첫 번째 클러스터 업데이트 필요 - 디렉토리 엔트리 업데이트 필요
                     // 현재는 단순화를 위해 에러 반환
                     return Err(FsError::IOError);
                 } else {
-                    self.filesystem.write_fat_entry_journaled(last_cluster, new_cluster)?;
+                    fs.write_fat_entry_journaled(last_cluster, new_cluster)?;
                 }
-                self.filesystem.write_fat_entry_journaled(new_cluster, 0x0FFFFFFF)?;
+                fs.write_fat_entry_journaled(new_cluster, 0x0FFFFFFF)?;
                 
                 (new_cluster, 0)
             };
             
             // 클러스터 읽기
             let mut cluster_buf = alloc::vec![0u8; cluster_size];
-            self.filesystem.read_single_cluster(cluster, &mut cluster_buf)?;
+            fs.read_single_cluster(cluster, &mut cluster_buf)?;
             
             // 버퍼에 쓰기
             let available_in_cluster = cluster_size - cluster_offset;
@@ -1322,7 +1338,7 @@ impl File for Fat32File<'_> {
                 .copy_from_slice(&buf[bytes_written..bytes_written + to_write]);
             
             // 클러스터 쓰기 (데이터는 저널링 안 함, 성능상 이유)
-            self.filesystem.write_cluster_direct(cluster, &cluster_buf)?;
+            fs.write_cluster_direct(cluster, &cluster_buf)?;
             
             bytes_written += to_write;
             current_offset += to_write;
@@ -1350,6 +1366,8 @@ impl File for Fat32File<'_> {
             created: 0,
             modified: 0,
             accessed: 0,
+            uid: 0,
+            gid: 0,
         })
     }
     
@@ -1371,21 +1389,25 @@ impl File for Fat32File<'_> {
 }
 
 /// FAT32 디렉토리 핸들
-struct Fat32Directory<'a> {
-    filesystem: &'a mut Fat32FileSystem,
+struct Fat32Directory {
+    filesystem: *mut Fat32FileSystem,
     cluster: u32,
 }
 
-impl Directory for Fat32Directory<'_> {
+unsafe impl Send for Fat32Directory {}
+unsafe impl Sync for Fat32Directory {}
+
+impl Directory for Fat32Directory {
     fn read_dir(&self) -> FsResult<Vec<(String, FileType)>> {
         // TODO: 디렉토리 읽기 구현
         // 현재는 빈 벡터 반환 (컴파일 오류 방지)
         let mut result = Vec::new();
         
         // 디렉토리 데이터 읽기
-        let cluster_size = self.filesystem.boot_sector.sectors_per_cluster as usize * 512;
+        let fs = unsafe { &mut *self.filesystem };
+        let cluster_size = fs.boot_sector.sectors_per_cluster as usize * 512;
         let mut dir_buf = alloc::vec![0u8; cluster_size * 4];
-        let len = match self.filesystem.read_cluster_chain(self.cluster, &mut dir_buf) {
+        let len = match fs.read_cluster_chain(self.cluster, &mut dir_buf) {
             Ok(l) => l,
             Err(_) => return Ok(result),
         };

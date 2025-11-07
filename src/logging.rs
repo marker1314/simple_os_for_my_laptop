@@ -133,17 +133,17 @@ pub fn log(level: LogLevel, args: fmt::Arguments) {
         // 메시지를 문자열로 포맷팅 (임시 버퍼 사용)
         let mut buf = [0u8; MAX_LOG_LINE_LEN];
         let mut log_buf = LogBuffer { buf: &mut buf, pos: 0 };
-        
-        // 포맷팅 시도
+        // 포맷팅 시도 (가변 대여 구간)
         let fmt_result = core::fmt::Write::write_fmt(&mut log_buf, args);
+        let pos = log_buf.pos.min(MAX_LOG_LINE_LEN - 1);
         
         // 시리얼 포트로 출력
         crate::serial_print!("{} ", prefix);
         crate::serial_print!("{}\n", args);
 
         // 로그 버퍼에 저장 (포맷팅 성공 시에만)
-        if fmt_result.is_ok() && log_buf.pos > 0 {
-            let msg_str = core::str::from_utf8(&buf[..log_buf.pos.min(MAX_LOG_LINE_LEN - 1)])
+        if fmt_result.is_ok() && pos > 0 {
+            let msg_str = core::str::from_utf8(&buf[..pos])
                 .unwrap_or("");
             LOG_RING.lock().push(timestamp_ms, level, msg_str);
         } else {

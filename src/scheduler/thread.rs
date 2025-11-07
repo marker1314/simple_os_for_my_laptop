@@ -1,6 +1,7 @@
 //! 스레드 구조 및 컨텍스트 관리
 //!
 //! 이 모듈은 스레드의 상태와 CPU 컨텍스트를 관리합니다.
+use x86_64::structures::paging::PageSize;
 
 /// 스레드 상태
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -265,7 +266,7 @@ impl Thread {
             let frame = allocate_frame()?;
             allocated_frames.push(frame);
             
-            let page_addr = stack_start_virt + (i * Size4KiB::SIZE) as u64;
+            let page_addr = stack_start_virt + ((i as u64) * Size4KiB::SIZE);
             let page = Page::<Size4KiB>::containing_address(page_addr);
             
             // 페이지 매핑 (실제로는 map_zero_page_at 사용)
@@ -298,6 +299,7 @@ impl Thread {
             state: ThreadState::Ready,
             context: ThreadContext::new_with_stack(entry_point, stack_pointer),
             name,
+            priority: ThreadPriority::Normal,
             stack_start: Some(stack_start),
             stack_size,
             allocated_frames,
@@ -373,12 +375,12 @@ impl Thread {
                         // 스택 페이지 언맵
                         let pages_needed = (self.stack_size + Size4KiB::SIZE as usize - 1) / Size4KiB::SIZE as usize;
                         for i in 0..pages_needed {
-                            let page_addr = VirtAddr::new(stack_start + (i * Size4KiB::SIZE) as u64);
+                            let page_addr = VirtAddr::new(stack_start + ((i as u64) * Size4KiB::SIZE));
                             let page = Page::<Size4KiB>::containing_address(page_addr);
                             
                             // 페이지 언맵 시도
-                            if let Ok((frame, _)) = mapper.unmap(page) {
-                                frame.flush();
+                            if let Ok((frame, flush)) = mapper.unmap(page) {
+                                flush.flush();
                                 // 프레임 해제
                                 crate::memory::frame::deallocate_frame(frame);
                             }
@@ -406,6 +408,11 @@ impl Thread {
         
         // 상태를 Terminated로 설정
         self.set_terminated();
+    }
+
+    /// 동적 할당된 프레임 개수
+    pub fn allocated_frames_len(&self) -> usize {
+        self.allocated_frames.len()
     }
 }
 

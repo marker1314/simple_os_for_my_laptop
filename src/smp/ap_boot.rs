@@ -24,7 +24,8 @@ pub unsafe extern "C" fn ap_boot_entry() -> ! {
     // 페이지 테이블 설정 (BSP와 동일한 페이지 테이블 사용)
     use x86_64::registers::control::Cr3;
     let (frame, _) = Cr3::read();
-    Cr3::write(frame, _);
+    // 재설정 없이 현재 CR3 유지 (BSP 테이블 사용)
+    Cr3::write(frame, x86_64::registers::control::Cr3::read().1);
     
     // 스택 설정 (임시, 이후 스케줄러가 할당)
     // 실제로는 각 AP마다 별도의 스택이 필요
@@ -66,7 +67,7 @@ pub unsafe extern "C" fn ap_init_complete() {
     crate::smp::set_ap_initialized(apic_id);
     
     // CPU 정보 등록
-    let cpu_info = crate::smp::cpu::CpuInfo::new(apic_id as u64, false);
+    let cpu_info = crate::smp::cpu::CpuInfo::new((apic_id as u64).try_into().unwrap(), false);
     crate::smp::register_cpu(cpu_info);
 }
 

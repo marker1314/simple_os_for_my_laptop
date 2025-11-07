@@ -27,6 +27,10 @@ pub struct NetworkDriverManager {
     irq: Option<u8>,
 }
 
+// The manager only accesses hardware under a single global Mutex; mark Send safely.
+unsafe impl Send for NetworkDriverManager {}
+unsafe impl Sync for NetworkDriverManager {}
+
 impl NetworkDriverManager {
     /// 새 네트워크 드라이버 매니저 생성
     pub fn new() -> Self {
@@ -70,7 +74,7 @@ impl NetworkDriverManager {
             // 네트워크 인터럽트 핸들러 등록 및 활성화
             let interrupt_num = crate::interrupts::pic::PIC1_OFFSET + pci_device.interrupt_line;
             unsafe {
-                crate::interrupts::idt::IDT[interrupt_num as usize]
+                crate::interrupts::idt::IDT.0[interrupt_num as usize]
                     .set_handler_fn(network_interrupt_handler);
                 crate::interrupts::pic::set_mask(pci_device.interrupt_line, true);
             }
@@ -78,18 +82,25 @@ impl NetworkDriverManager {
                            pci_device.interrupt_line, interrupt_num);
             
             Ok(())
-        } else if cfg!(feature = "net_r8168") && is_rtl8168(&pci_device) {
-            crate::log_info!("Initializing RTL8168 driver (IRQ: {})", pci_device.interrupt_line);
-            let mut driver = Rtl8168Driver::new(pci_device);
-            driver.init(&pci_device)?;
-            self.driver = Some(ActiveDriver::Rtl8168(driver));
-            self.initialized = true;
-            self.irq = Some(pci_device.interrupt_line);
-            let interrupt_num = crate::interrupts::pic::PIC1_OFFSET + pci_device.interrupt_line;
-            crate::interrupts::idt::IDT[interrupt_num as usize].set_handler_fn(network_interrupt_handler);
-            unsafe { crate::interrupts::pic::set_mask(pci_device.interrupt_line, true); }
-            Ok(())
         } else {
+            #[cfg(feature = "net_r8168")]
+            {
+                if is_rtl8168(&pci_device) {
+                    crate::log_info!("Initializing RTL8168 driver (IRQ: {})", pci_device.interrupt_line);
+                    let mut driver = Rtl8168Driver::new(pci_device);
+                    driver.init(&pci_device)?;
+                    self.driver = Some(ActiveDriver::Rtl8168(driver));
+                    self.initialized = true;
+                    self.irq = Some(pci_device.interrupt_line);
+                    let interrupt_num = crate::interrupts::pic::PIC1_OFFSET + pci_device.interrupt_line;
+                    unsafe {
+                        crate::interrupts::idt::IDT.0[interrupt_num as usize]
+                            .set_handler_fn(network_interrupt_handler);
+                        crate::interrupts::pic::set_mask(pci_device.interrupt_line, true);
+                    }
+                    return Ok(());
+                }
+            }
             crate::log_warn!("Unsupported network device: Vendor=0x{:04X}, Device=0x{:04X}",
                            pci_device.vendor_id, pci_device.device_id);
             Err(NetworkError::DeviceNotFound)
@@ -143,7 +154,11 @@ impl NetworkDriverManager {
 }
 
 /// 전역 네트워크 드라이버 매니저
-static NETWORK_MANAGER: Mutex<NetworkDriverManager> = Mutex::new(NetworkDriverManager::new());
+static NETWORK_MANAGER: Mutex<NetworkDriverManager> = Mutex::new(NetworkDriverManager {
+    driver: None,
+    initialized: false,
+    irq: None,
+});
 
 /// 네트워크 드라이버 초기화
 ///
@@ -178,6 +193,18 @@ pub fn low_power_tick(now_ms: u64) {
     manager.maybe_low_power(now_ms);
 }
 
+/// Bring up IPv4 via DHCP after link is ready (placeholder)
+pub fn bringup_ipv4_via_dhcp() {
+    match crate::net::dhcp::obtain_lease() {
+        Ok(lease) => {
+            crate::net::dhcp::apply_lease(&lease);
+        }
+        Err(_) => {
+            crate::log_warn!("DHCP: failed to obtain lease");
+        }
+    }
+}
+
 /// 네트워크 인터럽트 핸들러
 ///
 /// 네트워크 인터럽트가 발생했을 때 호출됩니다.
@@ -186,14 +213,24 @@ pub extern "x86-interrupt" fn network_interrupt_handler(
 ) {
     let mut manager = NETWORK_MANAGER.lock();
     
-    if let Some(ref mut driver) = manager.driver {
-        driver.handle_interrupt();
-        
-        // 수신된 패킷 처리
-        while let Some(packet) = driver.receive_packet() {
-            // 이더넷 프레임 처리로 전달
-            if let Err(e) = crate::net::ethernet_frame::handle_ethernet_frame(&packet) {
-                crate::log_warn!("Failed to handle Ethernet frame: {:?}", e);
+    if let Some(ref mut drv) = manager.driver {
+        match drv {
+            ActiveDriver::Rtl8139(d) => {
+                d.handle_interrupt();
+                while let Some(packet) = d.receive_packet() {
+                    if let Err(e) = crate::net::ethernet_frame::handle_ethernet_frame(&packet) {
+                        crate::log_warn!("Failed to handle Ethernet frame: {:?}", e);
+                    }
+                }
+            }
+            #[cfg(feature = "net_r8168")]
+            ActiveDriver::Rtl8168(d) => {
+                d.handle_interrupt();
+                while let Some(packet) = d.receive_packet() {
+                    if let Err(e) = crate::net::ethernet_frame::handle_ethernet_frame(&packet) {
+                        crate::log_warn!("Failed to handle Ethernet frame: {:?}", e);
+                    }
+                }
             }
         }
     }

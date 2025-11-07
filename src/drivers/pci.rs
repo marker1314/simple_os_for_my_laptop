@@ -221,18 +221,30 @@ pub unsafe fn scan_pci_bus(callback: PciScanCallback) {
 /// # Safety
 /// 메모리 관리가 초기화된 후에 호출되어야 합니다.
 pub unsafe fn find_pci_device(class_code: u8, subclass: u8) -> Option<PciDevice> {
-    let mut found_device: Option<PciDevice> = None;
-    
-    scan_pci_bus(|device| {
-        if device.class_code == class_code && device.subclass == subclass {
-            found_device = Some(*device);
-            true // 스캔 중단
-        } else {
-            false // 계속 스캔
+    // 직접 스캔하여 클로저 캡처 문제 회피
+    for bus in 0..=255 {
+        for device in 0..=31 {
+            // 함수 0 우선 확인
+            let mut pci_device = PciDevice { bus, device, function: 0, vendor_id: 0, device_id: 0, class_code: 0, subclass: 0, prog_if: 0, header_type: 0, bar0: 0, interrupt_line: 0 };
+            if !pci_device.exists() { continue; }
+            pci_device.read_info();
+            let header_type = pci_device.header_type & 0x7F;
+            if header_type == PCI_HEADER_TYPE_DEVICE {
+                if (pci_device.header_type & 0x80) != 0 {
+                    for function in 0..8 {
+                        let mut func = PciDevice { bus, device, function, vendor_id: 0, device_id: 0, class_code: 0, subclass: 0, prog_if: 0, header_type: 0, bar0: 0, interrupt_line: 0 };
+                        if func.exists() {
+                            func.read_info();
+                            if func.class_code == class_code && func.subclass == subclass { return Some(func); }
+                        }
+                    }
+                } else {
+                    if pci_device.class_code == class_code && pci_device.subclass == subclass { return Some(pci_device); }
+                }
+            }
         }
-    });
-    
-    found_device
+    }
+    None
 }
 
 /// 네트워크 디바이스 찾기

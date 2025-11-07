@@ -73,53 +73,13 @@ fn detect_cpu_count() -> usize {
     // TODO: ACPI MADT (Multiple APIC Description Table)에서 CPU 수 읽기
     // 현재는 CPUID를 통해 논리 프로세서 수 확인
     unsafe {
-        let mut eax: u32 = 0;
-        let mut ebx: u32 = 0;
-        let mut ecx: u32 = 0;
-        let mut edx: u32 = 0;
-        
-        // CPUID leaf 0x1 (Feature Information)
-        core::arch::asm!(
-            "cpuid",
-            in("eax") 0x1u32,
-            out("eax") eax,
-            out("ebx") ebx,
-            out("ecx") ecx,
-            out("edx") edx,
-            options(nostack, preserves_flags)
-        );
-        
-        // CPUID leaf 0xB (Extended Topology Enumeration)
-        // 논리 프로세서 수 확인 시도
-        let mut max_leaf: u32 = 0;
-        core::arch::asm!(
-            "cpuid",
-            in("eax") 0x0u32,
-            out("eax") max_leaf,
-            options(nostack, preserves_flags)
-        );
-        
+        use core::arch::x86_64::{__cpuid, __cpuid_count};
+        let max_leaf = __cpuid(0).eax;
         if max_leaf >= 0xB {
-            // Extended Topology Enumeration 사용
-            core::arch::asm!(
-                "cpuid",
-                in("eax") 0xBu32,
-                in("ecx") 0u32,
-                out("eax") eax,
-                out("ebx") ebx,
-                out("ecx") ecx,
-                out("edx") edx,
-                options(nostack, preserves_flags)
-            );
-            
-            // 논리 프로세서 수 (EBX[15:0])
-            let logical_count = ebx & 0xFFFF;
-            if logical_count > 0 {
-                return logical_count as usize;
-            }
+            let r = __cpuid_count(0xB, 0);
+            let logical = r.ebx & 0xFFFF;
+            if logical > 0 { return logical as usize; }
         }
-        
-        // 기본값: 1 (BSP만)
         1
     }
 }

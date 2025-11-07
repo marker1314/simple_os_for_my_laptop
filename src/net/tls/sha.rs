@@ -5,6 +5,8 @@
 //! # 참고 자료
 //! - FIPS PUB 180-4: Secure Hash Standard
 
+use alloc::vec;
+
 /// SHA-1 해시 길이 (바이트)
 pub const SHA1_HASH_SIZE: usize = 20;
 

@@ -64,12 +64,12 @@ impl RoundRobinScheduler {
             t.set_ready();
             
             // OOM Killer 통계 업데이트
-            let total_memory = t.stack_size + (t.allocated_frames.len() * 4096);
+            let total_memory = t.stack_size + (t.allocated_frames_len() * 4096);
             crate::memory::oom_killer::update_thread_memory(
                 t.id,
                 0, // 힙 사용량은 별도로 추적 필요
                 t.stack_size,
-                t.allocated_frames.len(),
+                t.allocated_frames_len(),
             );
             
             t.priority

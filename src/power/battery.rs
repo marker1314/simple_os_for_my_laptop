@@ -196,7 +196,7 @@ impl BatteryManager {
 
 /// 전역 배터리 관리자
 static BATTERY_MANAGER: Mutex<BatteryManager> = Mutex::new(BatteryManager {
-    battery_info: BatteryInfo::default(),
+    battery_info: BatteryInfo { status: BatteryStatus::Unknown, level_percent: 100, capacity_mah: None, design_capacity_mah: None, voltage_mv: None },
     auto_power_management: true,
     low_battery_threshold: 20,
     critical_battery_threshold: 10,

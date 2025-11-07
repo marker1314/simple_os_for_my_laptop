@@ -21,6 +21,20 @@ pub struct I2cDeviceInfo {
     pub hid: [u8; 8],
 }
 
+/// 전원 소스 종류
+pub enum PowerSource {
+    Ac,
+    Battery,
+    Unknown,
+}
+
+/// 배터리 상태 요약
+pub struct BatteryStatus {
+    pub present: bool,
+    pub charging: bool,
+    pub capacity_percent: u8,
+}
+
 /// ACPI 파서
 ///
 /// ACPI 테이블을 파싱하고 전력 관리 정보를 제공합니다.
@@ -133,20 +147,6 @@ impl AcpiParser {
             slave_address: 0x15,                      // ELAN 트랙패드
             hid: *b"PNP0C50\0",                      // I2C HID 장치 표준 HID
         })
-    }
-
-    /// 전원 소스 종류
-    pub enum PowerSource {
-        Ac,
-        Battery,
-        Unknown,
-    }
-
-    /// 배터리 상태 요약
-    pub struct BatteryStatus {
-        pub present: bool,
-        pub charging: bool,
-        pub capacity_percent: u8,
     }
 
     /// _PSR (Power Source) 읽기 - Stub

@@ -5,6 +5,7 @@
 use super::window::Window;
 use crate::drivers::mouse::MouseEvent;
 use alloc::vec::Vec;
+use alloc::vec;
 use spin::Mutex;
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -47,7 +48,7 @@ impl Compositor {
     /// 모든 윈도우 렌더링 (이벤트 기반)
     /// NEEDS_REDRAW가 true일 때만 렌더링 (busy loop 방지)
     /// Occluded/minimized 윈도우는 full repaint 스킵
-    pub fn render_all(&self) {
+    pub fn render_all(&mut self) {
         // Redraw가 필요할 때만 렌더링 (이벤트 기반)
         if NEEDS_REDRAW.load(Ordering::Acquire) {
             // Occlusion 계산: 각 윈도우가 다른 윈도우에 가려졌는지 확인
@@ -113,12 +114,16 @@ impl Compositor {
         match event {
             MouseEvent::LeftButtonDown(x, y) => {
                 // 클릭된 윈도우 찾기 (역순으로 검색, 위에 있는 윈도우 우선)
-                for (i, window) in self.windows.iter_mut().enumerate().rev() {
+                for i in (0..self.windows.len()).rev() {
+                    // 불변/가변 분리를 위해 split_at_mut 사용
+                    let (left, right) = self.windows.split_at_mut(i);
+                    let window = &mut right[0];
                     if window.contains_point(x, y) {
-                        // 포커스 설정
-                        for (j, w) in self.windows.iter_mut().enumerate() {
-                            w.set_focus(i == j);
+                        // 포커스 설정: 왼쪽은 불변 순회, 선택 창만 가변 접근
+                        for (j, w) in left.iter_mut().enumerate() {
+                            w.set_focus(false);
                         }
+                        window.set_focus(true);
 
                         // 타이틀 바 클릭 시 드래그 시작
                         if window.is_in_title_bar(x, y) {

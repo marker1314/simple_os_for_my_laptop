@@ -69,13 +69,12 @@ impl PerformanceMetrics {
         self.boot_time_ms = crate::drivers::timer::get_milliseconds();
         
         // 메모리 사용량 업데이트
-        if let Some((allocated, deallocated, in_use)) = crate::kernel::watchdog::get_memory_usage() {
-            self.heap_allocations = allocated;
-            self.heap_deallocations = deallocated;
-            self.memory_used_bytes = in_use;
-            if in_use > self.memory_peak_bytes {
-                self.memory_peak_bytes = in_use;
-            }
+        let (allocated, deallocated, in_use) = crate::kernel::watchdog::get_memory_usage();
+        self.heap_allocations = allocated;
+        self.heap_deallocations = deallocated;
+        self.memory_used_bytes = in_use;
+        if in_use > self.memory_peak_bytes {
+            self.memory_peak_bytes = in_use;
         }
         
         // 프레임 통계 업데이트
@@ -127,7 +126,23 @@ impl PerformanceMetrics {
     }
 }
 
-static METRICS: Mutex<PerformanceMetrics> = Mutex::new(PerformanceMetrics::default());
+static METRICS: Mutex<PerformanceMetrics> = Mutex::new(PerformanceMetrics {
+    boot_time_ms: 0,
+    cpu_cycles: 0,
+    context_switches: 0,
+    interrupts: 0,
+    syscalls: 0,
+    page_faults: 0,
+    heap_allocations: 0,
+    heap_deallocations: 0,
+    memory_used_bytes: 0,
+    memory_peak_bytes: 0,
+    active_threads: 0,
+    hid_events: 0,
+    audio_underruns: 0,
+    tls_failures: 0,
+    s3_success: 0,
+});
 
 /// 메트릭 업데이트
 pub fn update_metrics() {

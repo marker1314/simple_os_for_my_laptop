@@ -5,9 +5,10 @@
 //! 추가 매핑과 페이지 테이블 조작을 위한 유틸리티를 제공합니다.
 
 use x86_64::{
-    structures::paging::{Mapper, OffsetPageTable, Page, PageTableFlags, Size4KiB, mapper::MapToError},
+    structures::paging::{Mapper, OffsetPageTable, Page, PageTableFlags, Size4KiB, PageSize, mapper::MapToError, PhysFrame, FrameAllocator},
     VirtAddr,
 };
+use x86_64::structures::paging::page_table::PageTableEntry;
 use bootloader_api::BootInfo;
 use spin::Mutex;
 
@@ -188,7 +189,11 @@ pub unsafe fn promote_cow_page(addr: VirtAddr) -> Result<(), MapToError<Size4KiB
         .ok_or(MapToError::FrameAllocationFailed)?;
     
     // 페이지 언맵 (기존 읽기 전용 매핑 제거)
-    mapper.unmap(page)?.1.flush();
+    mapper
+        .unmap(page)
+        .map_err(|_| MapToError::FrameAllocationFailed)?
+        .1
+        .flush();
     
     // 새 프레임에 데이터 복사
     let new_virt = offset + new_frame.start_address().as_u64();
@@ -203,7 +208,7 @@ pub unsafe fn promote_cow_page(addr: VirtAddr) -> Result<(), MapToError<Size4KiB
 }
 
 /// 페이지 테이블 엔트리 타입 (64비트)
-type PageTableEntry = u64;
+// Removed old alias; use x86_64::structures::paging::page_table::PageTableEntry instead
 
 /// NX 비트 마스크 (63번 비트)
 const NX_BIT_MASK: u64 = 1 << 63;
@@ -236,44 +241,49 @@ unsafe fn get_page_table_entry_ptr(
     let p4_virt = physical_memory_offset + p4_phys.as_u64();
     let p4_table: *mut PageTable = p4_virt.as_mut_ptr();
     
-    // P4 엔트리 확인
-    let p4_entry = (*p4_table)[p4_index as usize];
+    // P4 엔트리 확인 (명시적 참조로 오토레프 방지)
+    let p4_table_ref: &PageTable = &*p4_table;
+    let p4_entry = &p4_table_ref[p4_index as usize];
     if !p4_entry.flags().contains(PageTableFlags::PRESENT) {
         return None;
     }
     
     // P3 테이블 가져오기
-    let p3_frame = PhysFrame::containing_address(x86_64::PhysAddr::new(p4_entry.addr().as_u64()));
+    let p3_frame: PhysFrame<Size4KiB> = PhysFrame::containing_address(x86_64::PhysAddr::new(p4_entry.addr().as_u64()));
     let p3_phys = p3_frame.start_address();
     let p3_virt = physical_memory_offset + p3_phys.as_u64();
     let p3_table: *mut PageTable = p3_virt.as_mut_ptr();
     
-    // P3 엔트리 확인
-    let p3_entry = (*p3_table)[p3_index as usize];
+    // P3 엔트리 확인 (명시적 참조)
+    let p3_table_ref: &PageTable = &*p3_table;
+    let p3_entry = &p3_table_ref[p3_index as usize];
     if !p3_entry.flags().contains(PageTableFlags::PRESENT) {
         return None;
     }
     
     // P2 테이블 가져오기
-    let p2_frame = PhysFrame::containing_address(x86_64::PhysAddr::new(p3_entry.addr().as_u64()));
+    let p2_frame: PhysFrame<Size4KiB> = PhysFrame::containing_address(x86_64::PhysAddr::new(p3_entry.addr().as_u64()));
     let p2_phys = p2_frame.start_address();
     let p2_virt = physical_memory_offset + p2_phys.as_u64();
     let p2_table: *mut PageTable = p2_virt.as_mut_ptr();
     
-    // P2 엔트리 확인
-    let p2_entry = (*p2_table)[p2_index as usize];
+    // P2 엔트리 확인 (명시적 참조)
+    let p2_table_ref: &PageTable = &*p2_table;
+    let p2_entry = &p2_table_ref[p2_index as usize];
     if !p2_entry.flags().contains(PageTableFlags::PRESENT) {
         return None;
     }
     
     // P1 테이블 가져오기 (최종 페이지 테이블)
-    let p1_frame = PhysFrame::containing_address(x86_64::PhysAddr::new(p2_entry.addr().as_u64()));
+    let p1_frame: PhysFrame<Size4KiB> = PhysFrame::containing_address(x86_64::PhysAddr::new(p2_entry.addr().as_u64()));
     let p1_phys = p1_frame.start_address();
     let p1_virt = physical_memory_offset + p1_phys.as_u64();
     let p1_table: *mut PageTable = p1_virt.as_mut_ptr();
     
-    // P1 엔트리 포인터 반환
-    Some((*p1_table).0.as_mut_ptr().add(p1_index as usize))
+    // P1 엔트리 포인터 반환 (명시적 가변 참조 후 원시 포인터로 변환)
+    let p1_table_mut: &mut PageTable = &mut *p1_table;
+    let entry_ptr: *mut PageTableEntry = &mut p1_table_mut[p1_index as usize];
+    Some(entry_ptr as *mut _)
 }
 
 /// NX (No Execute) 비트 설정
@@ -292,18 +302,19 @@ pub unsafe fn set_nx_bit(page: Page<Size4KiB>, enabled: bool) -> Result<(), MapT
     let entry_ptr = get_page_table_entry_ptr(page, offset)
         .ok_or(MapToError::FrameAllocationFailed)?;
     
-    // 현재 엔트리 읽기
-    let mut entry = core::ptr::read(entry_ptr);
-    
-    // NX 비트 설정/해제 (63번 비트)
-    if enabled {
-        entry |= NX_BIT_MASK;
-    } else {
-        entry &= !NX_BIT_MASK;
+    // 현재 엔트리 플래그 수정
+    let entry = &mut *entry_ptr;
+    let mut flags = entry.flags();
+    #[allow(deprecated)]
+    {
+        use x86_64::structures::paging::PageTableFlags as F;
+        if enabled {
+            flags |= F::NO_EXECUTE;
+        } else {
+            flags.remove(F::NO_EXECUTE);
+        }
     }
-    
-    // 엔트리 쓰기
-    core::ptr::write(entry_ptr, entry);
+    entry.set_flags(flags);
     
     // TLB 플러시 (변경 사항 반영)
     use x86_64::instructions::tlb;
@@ -330,8 +341,12 @@ pub fn is_nx_bit_set(page: Page<Size4KiB>) -> bool {
 
     unsafe {
         if let Some(entry_ptr) = get_page_table_entry_ptr(page, offset) {
-            let entry = core::ptr::read(entry_ptr);
-            (entry & NX_BIT_MASK) != 0
+            let entry = &*entry_ptr;
+            #[allow(deprecated)]
+            {
+                use x86_64::structures::paging::PageTableFlags as F;
+                entry.flags().contains(F::NO_EXECUTE)
+            }
         } else {
             false
         }
@@ -349,11 +364,14 @@ pub fn enable_aslr() -> Result<(), crate::memory::aslr::AslrError> {
 
 /// Enable SMEP/SMAP if supported (feature-gated by caller build flags)
 pub fn enable_smep_smap(smep: bool, smap: bool) {
-    use x86_64::registers::control::Cr4;
+    use x86_64::registers::control::{Cr4, Cr4Flags};
     // Read-modify-write CR4
     let mut cr4 = Cr4::read();
-    if smep { cr4 |= Cr4::SMEP; }
-    if smap { cr4 |= Cr4::SMAP; }
+    // Some crate versions may not expose named flags; fallback to raw bits (SMEP=1<<20, SMAP=1<<21)
+    let mut add = Cr4Flags::empty();
+    if smep { add |= Cr4Flags::from_bits_truncate(1 << 20); }
+    if smap { add |= Cr4Flags::from_bits_truncate(1 << 21); }
+    cr4 |= add;
     unsafe { Cr4::write(cr4); }
     crate::log_info!("Paging: SMEP {}, SMAP {}", if smep {"on"} else {"off"}, if smap {"on"} else {"off"});
 }

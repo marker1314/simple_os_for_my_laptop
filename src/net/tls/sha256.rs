@@ -3,6 +3,7 @@
 //! Minimal, no_std implementation used for certificate verification.
 
 use alloc::vec::Vec;
+use alloc::vec;
 
 pub const SHA256_HASH_SIZE: usize = 32;
 

@@ -10,6 +10,9 @@
 
 pub mod manager;
 pub mod acpi;
+pub mod acpi_fadt;
+pub mod user_activity;
+pub mod battery;
 pub mod scaling;
 pub mod policy;
 pub mod idle;
@@ -30,6 +33,11 @@ use spin::Mutex;
 
 /// 전역 전력 관리자 인스턴스
 static POWER_MANAGER: Mutex<Option<PowerManager>> = Mutex::new(None);
+
+/// Minimal ACPI table fetch stub (returns None until a real ACPI parser is wired)
+pub unsafe fn acpi_table_fetch(_sig: &[u8]) -> Option<&'static [u8]> {
+    None
+}
 
 /// 전력 관리자 초기화
 ///

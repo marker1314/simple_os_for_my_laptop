@@ -6,6 +6,9 @@
 //! 기본 구조만 제공됩니다. 완전한 X.509 파싱은 향후 구현됩니다.
 
 use crate::net::tls::TlsError;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::format;
 
 /// TLS 인증서
 pub struct TlsCertificate {
@@ -83,7 +86,7 @@ impl<'a> Asn1Parser<'a> {
     }
     
     /// ASN.1 시퀀스 읽기
-    fn read_sequence(&mut self) -> Result<&'a [u8], TlsCertificateError> {
+    pub(crate) fn read_sequence(&mut self) -> Result<&'a [u8], TlsCertificateError> {
         if self.offset >= self.data.len() || self.data[self.offset] != Asn1Tag::Sequence as u8 {
             return Err(TlsCertificateError::ParseError);
         }
@@ -100,7 +103,7 @@ impl<'a> Asn1Parser<'a> {
     }
     
     /// ASN.1 정수 읽기
-    fn read_integer(&mut self) -> Result<alloc::vec::Vec<u8>, TlsCertificateError> {
+    pub(crate) fn read_integer(&mut self) -> Result<alloc::vec::Vec<u8>, TlsCertificateError> {
         if self.offset >= self.data.len() || self.data[self.offset] != Asn1Tag::Integer as u8 {
             return Err(TlsCertificateError::ParseError);
         }
@@ -117,7 +120,7 @@ impl<'a> Asn1Parser<'a> {
     }
     
     /// ASN.1 UTF-8 문자열 읽기
-    fn read_utf8_string(&mut self) -> Result<String, TlsCertificateError> {
+    pub(crate) fn read_utf8_string(&mut self) -> Result<String, TlsCertificateError> {
         if self.offset >= self.data.len() || self.data[self.offset] != Asn1Tag::Utf8String as u8 {
             return Err(TlsCertificateError::ParseError);
         }
@@ -133,13 +136,13 @@ impl<'a> Asn1Parser<'a> {
         
         // UTF-8 문자열로 변환
         match core::str::from_utf8(&self.data[start..start + length]) {
-            Ok(s) => Ok(s.to_string()),
+            Ok(s) => Ok(String::from(s)),
             Err(_) => Err(TlsCertificateError::ParseError),
         }
     }
     
     /// ASN.1 UTC Time 읽기
-    fn read_utc_time(&mut self) -> Result<String, TlsCertificateError> {
+    pub(crate) fn read_utc_time(&mut self) -> Result<String, TlsCertificateError> {
         if self.offset >= self.data.len() || self.data[self.offset] != Asn1Tag::UtcTime as u8 {
             return Err(TlsCertificateError::ParseError);
         }
@@ -171,12 +174,12 @@ impl<'a> Asn1Parser<'a> {
     }
     
     /// 현재 위치 가져오기
-    fn position(&self) -> usize {
+    pub(crate) fn position(&self) -> usize {
         self.offset
     }
     
     /// 위치 설정
-    fn set_position(&mut self, pos: usize) {
+    pub(crate) fn set_position(&mut self, pos: usize) {
         self.offset = pos;
     }
 }
@@ -306,9 +309,9 @@ impl TlsCertificate {
         } else if der.windows(6).any(|w| w == b"sha256") || der.windows(6).any(|w| w == b"SHA256") {
             self.signature_algorithm = Some("sha256".to_string());
         } else if der.windows(6).any(|w| w == b"sha384") || der.windows(6).any(|w| w == b"SHA384") {
-            self.signature_algorithm = Some("sha384".to_string());
+            self.signature_algorithm = Some(String::from("sha384"));
         } else if der.windows(6).any(|w| w == b"sha512") || der.windows(6).any(|w| w == b"SHA512") {
-            self.signature_algorithm = Some("sha512".to_string());
+            self.signature_algorithm = Some(String::from("sha512"));
         }
         
         // 5. 만료일 확인 (간단한 검색)
@@ -320,7 +323,7 @@ impl TlsCertificate {
             if let Ok(date_str) = core::str::from_utf8(&self.data[pos..pos + 13]) {
                 // 첫 번째 날짜는 notBefore, 두 번째는 notAfter
                 if self.not_before.is_none() {
-                    self.not_before = Some(date_str.to_string());
+                    self.not_before = Some(String::from(date_str));
                 } else if self.not_after.is_none() {
                     self.not_after = Some(date_str.to_string());
                 }
@@ -408,7 +411,7 @@ impl TlsCertificate {
         
         // TBSCertificate 추출 및 해시 계산
         let mut parser = Asn1Parser::new(der);
-        let tbs_cert_hash = if let Ok(cert_seq) = parser.read_sequence() {
+        let tbs_cert_hash: alloc::vec::Vec<u8> = if let Ok(cert_seq) = parser.read_sequence() {
             let mut cert_parser = Asn1Parser::new(cert_seq);
             if let Ok(tbs_cert) = cert_parser.read_sequence() {
                 // TBSCertificate 해시 계산
@@ -416,16 +419,16 @@ impl TlsCertificate {
                 match hash_algorithm {
                     "sha1" | "SHA1" => {
                         use crate::net::tls::sha::Sha1Context;
-                        Sha1Context::hash(tbs_cert)
+                        Sha1Context::hash(tbs_cert).to_vec()
                     }
                     "sha256" | "SHA256" => {
                         use crate::net::tls::sha256::Sha256Context;
-                        Sha256Context::hash(tbs_cert)
+                        Sha256Context::hash(tbs_cert).to_vec()
                     }
                     _ => {
                         // 기본값: SHA-1
                         use crate::net::tls::sha::Sha1Context;
-                        Sha1Context::hash(tbs_cert)
+                        Sha1Context::hash(tbs_cert).to_vec()
                     }
                 }
             } else {
@@ -458,11 +461,25 @@ impl TlsCertificate {
         // - 인증서 만료일 확인
         // - 인증서 해지 목록(CRL) 확인
         
-        // 기본 검증 통과 (실제 프로덕션에서는 더 엄격한 검증 필요)
-        // TBSCertificate 해시 계산은 완료됨
-        self.valid = true;
-        crate::log_info!("TLS: Certificate verified (hash computed, signature verification structure ready)");
-        Ok(())
+        // 시그니처 검증 연결 (공개키 추출 및 DigestInfo 비교)
+        if let Ok(pubkey) = crate::net::tls::rsa::RsaPublicKey::from_certificate(der) {
+            let sig_ok = crate::net::tls::rsa::rsa_verify_pkcs1_v15_digest(
+                &pubkey,
+                &[],
+                &tbs_cert_hash,
+                self.signature_algorithm.as_deref().unwrap_or("sha256"),
+            ).unwrap_or(false);
+            if !sig_ok {
+                crate::log_warn!("TLS: certificate signature mismatch");
+                return Err(TlsCertificateError::SignatureInvalid);
+            }
+            self.valid = true;
+            crate::log_info!("TLS: Certificate signature verified (PKCS#1 v1.5)");
+            Ok(())
+        } else {
+            crate::log_warn!("TLS: failed to extract RSA public key from certificate");
+            Err(TlsCertificateError::SignatureInvalid)
+        }
     }
     
     /// 서명 알고리즘 가져오기
@@ -557,15 +574,13 @@ impl TlsCertificate {
         // - 현재 시간과 비교
         
         if let Some(not_after) = &self.not_after {
-            // 간단한 만료일 확인 (실제로는 정확한 파싱 필요)
-            // 예: 231231235959Z -> 2023년 12월 31일 23:59:59
             if not_after.len() >= 2 {
-                let year_str = &not_after[0..2];
-                if let Ok(year) = core::str::from_utf8(year_str.as_bytes()).and_then(|s| s.parse::<u8>()) {
-                    // 간단한 검증 (실제로는 현재 시간과 비교 필요)
-                    if year < 20 {
-                        // 2000년대 초기 인증서는 만료되었을 가능성 높음
-                        crate::log_warn!("TLS: Certificate may be expired (year: 20{})", year);
+                let year_bytes = &not_after.as_bytes()[0..2];
+                if let Ok(year_str) = core::str::from_utf8(year_bytes) {
+                    if let Ok(year) = year_str.parse::<u8>() {
+                        if year < 20 {
+                            crate::log_warn!("TLS: Certificate may be expired (year: 20{})", year);
+                        }
                     }
                 }
             }

@@ -41,6 +41,7 @@ const OPC_IDENTIFY: u8 = 0x06;
 // NVM opcodes
 const OPC_READ: u8 = 0x02;
 const OPC_WRITE: u8 = 0x01;
+const OPC_FLUSH: u8 = 0x00;
 
 #[repr(C, packed)]
 struct SqEntry {
@@ -83,6 +84,9 @@ pub struct NvmeController {
     asq_tail: u16,
     acq_head: u16,
     acq_phase: u16,
+    // Namespace info (minimal)
+    nsid_default: u32,
+    ns_total_blocks: u64,
 }
 
 impl NvmeController {
@@ -101,6 +105,8 @@ impl NvmeController {
             asq_tail: 0,
             acq_head: 0,
             acq_phase: 1,
+            nsid_default: 1,
+            ns_total_blocks: 0,
         })
     }
 
@@ -248,6 +254,36 @@ impl NvmeController {
         Ok(())
     }
 
+    /// Issue Identify Namespace (CNS=0x00, NSID!=0). Returns NSZE (total LBAs)
+    pub unsafe fn identify_namespace(&mut self, nsid: u32, dst_phys: PhysAddr) -> Result<u64, NvmeError> {
+        if !self.initialized { return Err(NvmeError::InitFailed); }
+        let sqe = SqEntry {
+            opc: OPC_IDENTIFY,
+            fuse_psdt: 0,
+            cid: 4,
+            nsid,
+            rsvd2: 0,
+            mptr: 0,
+            prp1: dst_phys.as_u64(),
+            prp2: 0,
+            cdw10: 0x00_0000_00, // CNS=0x00 Identify Namespace
+            cdw11: 0,
+            cdw12: 0,
+            cdw13: 0,
+            cdw14: 0,
+            cdw15: 0,
+        };
+        let cqe = self.admin_submit_and_wait(&sqe)?;
+        let status = (cqe.status_p >> 1) & 0x7FFF;
+        if status != 0 { return Err(NvmeError::IoError); }
+        // NS Identify data layout: NSZE at bytes 0..7 (little-endian)
+        let off = crate::memory::paging::get_physical_memory_offset(crate::boot::get_boot_info());
+        let base = (off + dst_phys.as_u64()).as_ptr::<u8>();
+        let mut nsze: u64 = 0;
+        for i in 0..8 { nsze |= (core::ptr::read_volatile(base.add(i)) as u64) << (8*i); }
+        Ok(nsze)
+    }
+
     /// Read one LBA into PRP1 buffer for NSID=1
     pub unsafe fn read_lba(&mut self, nsid: u32, lba: u64, blocks: u16, dst_phys: PhysAddr) -> Result<(), NvmeError> {
         let sqe = SqEntry {
@@ -295,6 +331,30 @@ impl NvmeController {
         if status != 0 { return Err(NvmeError::IoError); }
         Ok(())
     }
+
+    /// Flush volatile write cache for namespace
+    pub unsafe fn flush_nsid(&mut self, nsid: u32) -> Result<(), NvmeError> {
+        let sqe = SqEntry {
+            opc: OPC_FLUSH,
+            fuse_psdt: 0,
+            cid: 5,
+            nsid,
+            rsvd2: 0,
+            mptr: 0,
+            prp1: 0,
+            prp2: 0,
+            cdw10: 0,
+            cdw11: 0,
+            cdw12: 0,
+            cdw13: 0,
+            cdw14: 0,
+            cdw15: 0,
+        };
+        let cqe = self.admin_submit_and_wait(&sqe)?;
+        let status = (cqe.status_p >> 1) & 0x7FFF;
+        if status != 0 { return Err(NvmeError::IoError); }
+        Ok(())
+    }
 }
 
 static mut NVME: Option<NvmeController> = None;
@@ -309,6 +369,19 @@ pub unsafe fn init() -> Result<(), NvmeError> {
         let phys = frame.start_address();
         if let Err(_e) = ctrl.identify_controller(phys) {
             crate::log_warn!("NVMe: Identify controller failed (continuing)");
+        }
+        // Identify namespace 1 to get total blocks
+        let ns_frame = crate::memory::allocate_frame().ok_or(NvmeError::InitFailed)?;
+        let ns_phys = ns_frame.start_address();
+        match ctrl.identify_namespace(1, ns_phys) {
+            Ok(nsze) => {
+                ctrl.nsid_default = 1;
+                ctrl.ns_total_blocks = nsze;
+                crate::log_info!("NVMe: NSID=1 total LBAs {}", nsze);
+            }
+            Err(_) => {
+                crate::log_warn!("NVMe: Identify namespace failed; defaulting to unknown size");
+            }
         }
         NVME = Some(ctrl);
         Ok(())
@@ -339,14 +412,26 @@ impl crate::drivers::ata::BlockDevice for NvmeBlockDevice {
         if buf.len() < 512 { return Err(crate::drivers::ata::BlockDeviceError::InvalidBuffer); }
         unsafe {
             if let Some(ctrl) = NVME.as_mut() {
-                // allocate one page temp buffer and read
-                let frame = crate::memory::allocate_frame().ok_or(crate::drivers::ata::BlockDeviceError::ReadError)?;
-                let phys = frame.start_address();
-                ctrl.read_lba(1, block, 1, phys).map_err(|_| crate::drivers::ata::BlockDeviceError::ReadError)?;
-                let off = crate::memory::paging::get_physical_memory_offset(crate::boot::get_boot_info());
-                let src = (off + phys.as_u64()).as_ptr::<u8>();
-                for i in 0..512 { buf[i] = unsafe { core::ptr::read_volatile(src.add(i)) }; }
-                Ok(512)
+                let mut last_err = crate::drivers::ata::BlockDeviceError::ReadError;
+                for _attempt in 0..3 {
+                    // allocate one page temp buffer and read
+                    let frame = match crate::memory::allocate_frame() { Some(f) => f, None => return Err(crate::drivers::ata::BlockDeviceError::ReadError) };
+                    let phys = frame.start_address();
+                    match ctrl.read_lba(ctrl.nsid_default, block, 1, phys) {
+                        Ok(()) => {
+                            let off = crate::memory::paging::get_physical_memory_offset(crate::boot::get_boot_info());
+                            let src = (off + phys.as_u64()).as_ptr::<u8>();
+                            for i in 0..512 { buf[i] = core::ptr::read_volatile(src.add(i)); }
+                            return Ok(512);
+                        }
+                        Err(_) => {
+                            last_err = crate::drivers::ata::BlockDeviceError::ReadError;
+                            // brief spin to avoid hammering controller
+                            for _ in 0..1000 { core::hint::spin_loop(); }
+                        }
+                    }
+                }
+                Err(last_err)
             } else {
                 Err(crate::drivers::ata::BlockDeviceError::NotReady)
             }
@@ -356,19 +441,41 @@ impl crate::drivers::ata::BlockDevice for NvmeBlockDevice {
         if _buf.len() < 512 { return Err(crate::drivers::ata::BlockDeviceError::InvalidBuffer); }
         unsafe {
             if let Some(ctrl) = NVME.as_mut() {
-                let frame = crate::memory::allocate_frame().ok_or(crate::drivers::ata::BlockDeviceError::WriteError)?;
-                let phys = frame.start_address();
-                let off = crate::memory::paging::get_physical_memory_offset(crate::boot::get_boot_info());
-                let dst = (off + phys.as_u64()).as_mut_ptr::<u8>();
-                for i in 0..512 { core::ptr::write_volatile(dst.add(i), _buf[i]); }
-                ctrl.write_lba(1, _block, 1, phys).map_err(|_| crate::drivers::ata::BlockDeviceError::WriteError)?;
-                Ok(512)
+                let mut last_err = crate::drivers::ata::BlockDeviceError::WriteError;
+                for _attempt in 0..3 {
+                    let frame = match crate::memory::allocate_frame() { Some(f) => f, None => return Err(crate::drivers::ata::BlockDeviceError::WriteError) };
+                    let phys = frame.start_address();
+                    let off = crate::memory::paging::get_physical_memory_offset(crate::boot::get_boot_info());
+                    let dst = (off + phys.as_u64()).as_mut_ptr::<u8>();
+                    for i in 0..512 { core::ptr::write_volatile(dst.add(i), _buf[i]); }
+                    match ctrl.write_lba(ctrl.nsid_default, _block, 1, phys) {
+                        Ok(()) => {
+                            // flush with retry
+                            let mut flushed = false;
+                            for _f in 0..2 {
+                                if ctrl.flush_nsid(ctrl.nsid_default).is_ok() { flushed = true; break; }
+                                for _ in 0..1000 { core::hint::spin_loop(); }
+                            }
+                            let _ = flushed; // best-effort
+                            return Ok(512);
+                        }
+                        Err(_) => {
+                            last_err = crate::drivers::ata::BlockDeviceError::WriteError;
+                            for _ in 0..2000 { core::hint::spin_loop(); }
+                        }
+                    }
+                }
+                Err(last_err)
             } else {
                 Err(crate::drivers::ata::BlockDeviceError::NotReady)
             }
         }
     }
-    fn num_blocks(&self) -> u64 { 0 }
+    fn num_blocks(&self) -> u64 {
+        unsafe {
+            if let Some(ctrl) = NVME.as_ref() { ctrl.ns_total_blocks } else { 0 }
+        }
+    }
 }
 
 

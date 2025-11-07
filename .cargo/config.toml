@@ -1,14 +1,5 @@
-[build]
-# 기본 타겟을 x86_64-unknown-none으로 설정
-target = "x86_64-unknown-none"
-
-# bootimage runner 사용
-[target.x86_64-unknown-none]
-runner = "bootimage runner"
-
-# Rust 플래그 설정 (향후 링커 스크립트 추가 시 사용)
-# [target.'cfg(target_arch = "x86_64")']
-# rustflags = [
-#     "-C", "link-arg=-Tlinker.ld",
-# ]
+## Project-specific cargo config
+# NOTE: Avoid forcing a global target here because tools like `bootloader build`
+# need to compile host-side crates for the host triple. We'll pass
+# `--target x86_64-unknown-none` explicitly when building the kernel.
 

@@ -1,6 +1,8 @@
 //! Hardware probe and summary logging (CPU, PCI)
 
 use crate::drivers::pci;
+use core::arch::x86_64::__cpuid;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 /// Log basic CPU vendor and family/model information
 pub fn log_cpu_info() {
@@ -8,51 +10,22 @@ pub fn log_cpu_info() {
     let mut brand_part = [0u32; 12];
     let (mut eax1, mut ebx1, mut ecx1, mut edx1) = (0u32, 0u32, 0u32, 0u32);
     unsafe {
-        core::arch::asm!(
-            "cpuid",
-            in("eax") 0u32,
-            lateout("eax") _,
-            lateout("ebx") vendor[0],
-            lateout("ecx") vendor[2],
-            lateout("edx") vendor[1],
-            options(nostack, preserves_flags)
-        );
-        core::arch::asm!(
-            "cpuid",
-            in("eax") 1u32,
-            lateout("eax") eax1,
-            lateout("ebx") ebx1,
-            lateout("ecx") ecx1,
-            lateout("edx") edx1,
-            options(nostack, preserves_flags)
-        );
-        // Brand string if available (0x80000002..0x80000004)
-        let mut max_ext: u32 = 0;
-        core::arch::asm!(
-            "cpuid",
-            in("eax") 0x8000_0000u32,
-            lateout("eax") max_ext,
-            lateout("ebx") _,
-            lateout("ecx") _,
-            lateout("edx") _,
-            options(nostack, preserves_flags)
-        );
+        let v0 = __cpuid(0);
+        vendor[0] = v0.ebx;
+        vendor[1] = v0.edx;
+        vendor[2] = v0.ecx;
+
+        let l1 = __cpuid(1);
+        eax1 = l1.eax; ebx1 = l1.ebx; ecx1 = l1.ecx; edx1 = l1.edx;
+
+        let max_ext = __cpuid(0x8000_0000).eax;
         if max_ext >= 0x8000_0004 {
             for i in 0..3u32 {
-                let (mut a, mut b, mut c, mut d) = (0u32, 0u32, 0u32, 0u32);
-                core::arch::asm!(
-                    "cpuid",
-                    in("eax") (0x8000_0002u32 + i),
-                    lateout("eax") a,
-                    lateout("ebx") b,
-                    lateout("ecx") c,
-                    lateout("edx") d,
-                    options(nostack, preserves_flags)
-                );
-                brand_part[(i as usize) * 4 + 0] = a;
-                brand_part[(i as usize) * 4 + 1] = b;
-                brand_part[(i as usize) * 4 + 2] = c;
-                brand_part[(i as usize) * 4 + 3] = d;
+                let r = __cpuid(0x8000_0002 + i);
+                brand_part[(i as usize) * 4 + 0] = r.eax;
+                brand_part[(i as usize) * 4 + 1] = r.ebx;
+                brand_part[(i as usize) * 4 + 2] = r.ecx;
+                brand_part[(i as usize) * 4 + 3] = r.edx;
             }
         }
     }
@@ -80,26 +53,34 @@ pub fn log_cpu_info() {
 }
 
 /// Log a short PCI summary by class (network/storage/display/other)
-pub fn log_pci_summary() {
-    let mut net = 0u32;
-    let mut storage = 0u32;
-    let mut display = 0u32;
-    let mut usb_cnt = 0u32;
-    unsafe {
-        pci::scan_pci_bus(|dev| {
-            match dev.class_code {
-                pci::PCI_CLASS_NETWORK => net += 1,
-                pci::PCI_CLASS_STORAGE => storage += 1,
-                pci::PCI_CLASS_DISPLAY => display += 1,
-                0x0C => {
-                    // Serial bus controllers; 0x0C03 is USB
-                    if dev.subclass == 0x03 { usb_cnt += 1; }
-                }
-                _ => {}
-            }
-            false
-        });
+static NET_CT: AtomicU32 = AtomicU32::new(0);
+static STO_CT: AtomicU32 = AtomicU32::new(0);
+static DSP_CT: AtomicU32 = AtomicU32::new(0);
+static USB_CT: AtomicU32 = AtomicU32::new(0);
+
+fn tally_pci(dev: &crate::drivers::pci::PciDevice) -> bool {
+    match dev.class_code {
+        crate::drivers::pci::PCI_CLASS_NETWORK => { NET_CT.fetch_add(1, Ordering::Relaxed); }
+        crate::drivers::pci::PCI_CLASS_STORAGE => { STO_CT.fetch_add(1, Ordering::Relaxed); }
+        crate::drivers::pci::PCI_CLASS_DISPLAY => { DSP_CT.fetch_add(1, Ordering::Relaxed); }
+        0x0C => {
+            if dev.subclass == 0x03 { USB_CT.fetch_add(1, Ordering::Relaxed); }
+        }
+        _ => {}
     }
+    false
+}
+
+pub fn log_pci_summary() {
+    NET_CT.store(0, Ordering::Relaxed);
+    STO_CT.store(0, Ordering::Relaxed);
+    DSP_CT.store(0, Ordering::Relaxed);
+    USB_CT.store(0, Ordering::Relaxed);
+    unsafe { pci::scan_pci_bus(tally_pci); }
+    let net = NET_CT.load(Ordering::Relaxed);
+    let storage = STO_CT.load(Ordering::Relaxed);
+    let display = DSP_CT.load(Ordering::Relaxed);
+    let usb_cnt = USB_CT.load(Ordering::Relaxed);
     crate::log_info!(
         "PCI: network={} storage={} display={} usb_ctl={}",
         net, storage, display, usb_cnt

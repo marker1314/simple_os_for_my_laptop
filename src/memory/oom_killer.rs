@@ -12,7 +12,7 @@
 use spin::Mutex;
 use alloc::collections::BTreeMap;
 
-use crate::scheduler::SCHEDULER;
+// Avoid direct access to private scheduler internals
 
 /// OOM Killer 설정
 #[derive(Debug, Clone, Copy)]
@@ -139,10 +139,6 @@ impl OomKiller {
     /// 2. 종료 가능한 상태인 스레드 (Blocked, Ready)
     /// 3. 커널 스레드는 제외 (id == 0)
     fn select_thread_to_kill(&self) -> Option<u64> {
-        // 스케줄러에서 현재 실행 중인 스레드 확인
-        let scheduler = SCHEDULER.lock();
-        let sched = scheduler.as_ref()?;
-        
         // 가장 많은 메모리를 사용하는 스레드 찾기
         let mut max_memory = 0;
         let mut candidate_thread_id = None;
@@ -209,7 +205,7 @@ impl OomKiller {
 
 /// 전역 OOM Killer 인스턴스
 static OOM_KILLER: Mutex<OomKiller> = Mutex::new(OomKiller {
-    config: OomKillerConfig::default(),
+    config: OomKillerConfig { memory_threshold_percent: 5, min_memory_bytes: 1024 * 1024, enabled: true },
     thread_stats: BTreeMap::new(),
     killed_count: 0,
     last_check_time: 0,

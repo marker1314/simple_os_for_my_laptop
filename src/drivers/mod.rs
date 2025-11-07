@@ -22,4 +22,6 @@ pub mod usb;
 pub mod audio;
 #[cfg(feature = "nvme")]
 pub mod nvme;
+#[cfg(feature = "wifi")]
+pub mod wifi;
 

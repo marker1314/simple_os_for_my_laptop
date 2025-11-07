@@ -1,7 +1,7 @@
 //! Minimal per-process syscall capability mask (global placeholder)
 //! For now, a global bitmap is used until per-process structs are plumbed.
 
-use crate::syscall::numbers::SyscallNumber;
+use crate::syscall::SyscallNumber;
 use spin::Mutex;
 
 // 256-bit bitmap (support up to 256 syscalls)

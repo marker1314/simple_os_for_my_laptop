@@ -2,7 +2,7 @@
 //!
 //! 스택 오버플로우/언더플로우 방지를 위한 guard page 구현
 
-use x86_64::structures::paging::{Page, PageTableFlags, Size4KiB};
+use x86_64::structures::paging::{Page, PageTableFlags, Size4KiB, PageSize};
 use x86_64::VirtAddr;
 use crate::memory::paging::{init_mapper, get_physical_memory_offset};
 use crate::memory::frame::BootInfoFrameAllocator;

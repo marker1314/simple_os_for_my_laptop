@@ -8,45 +8,49 @@ use x86_64::instructions::interrupts;
 use crate::interrupts::pic;
 use crate::{log_error, log_warn, log_debug, log_info};
 
-/// 전역 IDT
-pub static mut IDT: InterruptDescriptorTable = InterruptDescriptorTable::new();
+/// 16바이트 정렬된 IDT 저장소 (MSVC/LLVM 정렬 요구 대응)
+#[repr(align(16))]
+pub struct AlignedIdt(pub InterruptDescriptorTable);
+
+/// 전역 IDT (정렬 보장)
+pub static mut IDT: AlignedIdt = AlignedIdt(InterruptDescriptorTable::new());
 
 /// IDT 초기화
 ///
 /// 모든 예외 및 인터럽트 핸들러를 등록합니다.
 pub unsafe fn init() {
-    IDT.divide_error.set_handler_fn(divide_error_handler);
-    IDT.debug.set_handler_fn(debug_handler);
-    IDT.non_maskable_interrupt.set_handler_fn(nmi_handler);
-    IDT.breakpoint.set_handler_fn(breakpoint_handler);
-    IDT.overflow.set_handler_fn(overflow_handler);
-    IDT.bound_range_exceeded.set_handler_fn(bound_range_exceeded_handler);
-    IDT.invalid_opcode.set_handler_fn(invalid_opcode_handler);
-    IDT.device_not_available.set_handler_fn(device_not_available_handler);
-    IDT.double_fault.set_handler_fn(double_fault_handler);
+    IDT.0.divide_error.set_handler_fn(divide_error_handler);
+    IDT.0.debug.set_handler_fn(debug_handler);
+    IDT.0.non_maskable_interrupt.set_handler_fn(nmi_handler);
+    IDT.0.breakpoint.set_handler_fn(breakpoint_handler);
+    IDT.0.overflow.set_handler_fn(overflow_handler);
+    IDT.0.bound_range_exceeded.set_handler_fn(bound_range_exceeded_handler);
+    IDT.0.invalid_opcode.set_handler_fn(invalid_opcode_handler);
+    IDT.0.device_not_available.set_handler_fn(device_not_available_handler);
+    IDT.0.double_fault.set_handler_fn(double_fault_handler);
     // IDT.coprocessor_segment_overrun.set_handler_fn(coprocessor_segment_overrun_handler);
-    IDT.invalid_tss.set_handler_fn(invalid_tss_handler);
-    IDT.segment_not_present.set_handler_fn(segment_not_present_handler);
-    IDT.stack_segment_fault.set_handler_fn(stack_segment_fault_handler);
-    IDT.general_protection_fault.set_handler_fn(general_protection_fault_handler);
-    IDT.page_fault.set_handler_fn(page_fault_handler);
-    IDT.x87_floating_point.set_handler_fn(x87_floating_point_handler);
-    IDT.alignment_check.set_handler_fn(alignment_check_handler);
-    IDT.machine_check.set_handler_fn(machine_check_handler);
-    IDT.simd_floating_point.set_handler_fn(simd_floating_point_handler);
-    IDT.virtualization.set_handler_fn(virtualization_handler);
-    IDT.security_exception.set_handler_fn(security_exception_handler);
+    IDT.0.invalid_tss.set_handler_fn(invalid_tss_handler);
+    IDT.0.segment_not_present.set_handler_fn(segment_not_present_handler);
+    IDT.0.stack_segment_fault.set_handler_fn(stack_segment_fault_handler);
+    IDT.0.general_protection_fault.set_handler_fn(general_protection_fault_handler);
+    IDT.0.page_fault.set_handler_fn(page_fault_handler);
+    IDT.0.x87_floating_point.set_handler_fn(x87_floating_point_handler);
+    IDT.0.alignment_check.set_handler_fn(alignment_check_handler);
+    IDT.0.machine_check.set_handler_fn(machine_check_handler);
+    IDT.0.simd_floating_point.set_handler_fn(simd_floating_point_handler);
+    IDT.0.virtualization.set_handler_fn(virtualization_handler);
+    IDT.0.security_exception.set_handler_fn(security_exception_handler);
 
     // 하드웨어 인터럽트 (PIC 인터럽트)
     // IRQ 0: 타이머 (인터럽트 32)
-    IDT[32].set_handler_fn(crate::drivers::timer::timer_interrupt_handler);
+    IDT.0[32].set_handler_fn(crate::drivers::timer::timer_interrupt_handler);
     // IRQ 1: 키보드 (인터럽트 33)
-    IDT[33].set_handler_fn(crate::drivers::keyboard::keyboard_interrupt_handler);
+    IDT.0[33].set_handler_fn(crate::drivers::keyboard::keyboard_interrupt_handler);
     // IRQ 12: PS/2 마우스 (인터럽트 44)
-    IDT[44].set_handler_fn(mouse_interrupt_handler);
+    IDT.0[44].set_handler_fn(mouse_interrupt_handler);
 
     // IDT 로드
-    IDT.load();
+    IDT.0.load();
 }
 
 /// 시스템 콜 핸들러 등록
@@ -55,7 +59,7 @@ pub unsafe fn init() {
 /// * `interrupt_num` - 인터럽트 번호
 /// * `handler` - 핸들러 함수
 pub unsafe fn register_syscall_handler(interrupt_num: u8, handler: extern "x86-interrupt" fn(InterruptStackFrame)) {
-    IDT[interrupt_num as usize].set_handler_fn(handler);
+    IDT.0[interrupt_num as usize].set_handler_fn(handler);
     log_info!("Registered syscall handler for interrupt 0x{:02x}", interrupt_num);
 }
 
@@ -267,8 +271,8 @@ extern "x86-interrupt" fn page_fault_handler(
     let addr_u64 = accessed_address.as_u64();
     
     // 1. 읽기 전용 페이지 쓰기 시도 처리 (COW 가능)
-    if error_code.contains(PageFaultErrorCode::PRESENT) && 
-       error_code.contains(PageFaultErrorCode::WRITE) {
+    if error_code.contains(PageFaultErrorCode::PROTECTION_VIOLATION) && 
+       error_code.contains(PageFaultErrorCode::CAUSED_BY_WRITE) {
         // COW 페이지인지 확인 (읽기 전용이지만 복사 가능)
         // 현재는 COW 추적 메커니즘이 없으므로, 일단 에러로 처리
         // 향후 COW 페이지 추적 테이블 추가 시 여기서 복사 처리
@@ -299,7 +303,7 @@ extern "x86-interrupt" fn page_fault_handler(
         let code_base = 0xFFFF800000000000u64;
         let code_end = 0xFFFF800000100000u64; // 예상 커널 코드 영역
         if addr_u64 >= code_base && addr_u64 < code_end && 
-           error_code.contains(PageFaultErrorCode::WRITE) {
+           error_code.contains(PageFaultErrorCode::CAUSED_BY_WRITE) {
             crate::log_error!("Page Fault: Write to kernel code region at {:#016x}", addr_u64);
             crate::crash::record_exception(stack_frame.instruction_pointer.as_u64(), 0x0E);
             loop { x86_64::instructions::hlt(); }
@@ -326,7 +330,7 @@ extern "x86-interrupt" fn page_fault_handler(
     }
     
     // 4. 스왑된 페이지 처리 (스왑 인)
-    if !error_code.contains(PageFaultErrorCode::PRESENT) {
+    if !error_code.contains(PageFaultErrorCode::PROTECTION_VIOLATION) {
         use crate::memory::swap;
         use x86_64::structures::paging::Page;
         
@@ -358,7 +362,7 @@ extern "x86-interrupt" fn page_fault_handler(
     }
     
     // 5. 힙 확장 처리 (기존 로직)
-    if !error_code.contains(PageFaultErrorCode::PRESENT) {
+    if !error_code.contains(PageFaultErrorCode::PROTECTION_VIOLATION) {
         let (heap_start, heap_size) = crate::memory::heap::heap_bounds();
         let heap_end = heap_start.saturating_add(heap_size);
         let heap_max = heap_start + (2 * 1024 * 1024); // 최대 2MB
@@ -427,7 +431,7 @@ extern "x86-interrupt" fn page_fault_handler(
     log_error!("Stack Frame: {:#?}", stack_frame);
     
     // 추가 컨텍스트 정보
-    if error_code.contains(PageFaultErrorCode::USER) {
+    if error_code.contains(PageFaultErrorCode::USER_MODE) {
         log_error!("Fault occurred in user mode");
     } else {
         log_error!("Fault occurred in kernel mode");

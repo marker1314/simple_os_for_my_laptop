@@ -1,6 +1,6 @@
 //! Crash capture with symbolization support (best-effort)
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Clone, Copy)]
 pub struct CrashDump {
     pub magic: u32,

@@ -7,7 +7,7 @@ pub mod permissions;
 pub mod acl;
 pub mod syscall_caps;
 
-pub use user::{UserId, GroupId, User, Group, UserManager, get_current_uid, get_current_gid, get_user_manager};
+pub use user::{UserId, GroupId, User, Group, UserManager, get_current_uid, get_current_gid, is_user_in_group};
 pub use permissions::{AccessPermission, AccessResult, PermissionChecker, UnixPermissions};
 pub use acl::{AclEntry, AccessControlList};
 pub use syscall_caps::{is_syscall_allowed, set_syscall_cap_allow_all, deny_syscall};

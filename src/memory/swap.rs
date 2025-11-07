@@ -10,7 +10,7 @@
 //! 4. **스왑 인**: 필요 시 디스크에서 페이지를 메모리로 복원
 //! 5. **OOM Killer**: 메모리가 완전히 부족할 때 프로세스 종료 (선택적)
 
-use x86_64::structures::paging::{Page, PhysFrame, Size4KiB};
+use x86_64::structures::paging::{Page, PhysFrame, Size4KiB, PageSize, Mapper};
 use x86_64::VirtAddr;
 use spin::Mutex;
 use alloc::vec::Vec;
@@ -475,27 +475,47 @@ impl core::fmt::Display for SwapError {
 }
 
 /// 전역 스왑 관리자
-static SWAP_MANAGER: Mutex<SwapManager> = Mutex::new(SwapManager::new());
+static SWAP_MANAGER: Mutex<Option<SwapManager>> = Mutex::new(None);
 
 /// 스왑 관리자 초기화
 ///
 /// # Safety
 /// 메모리 관리 및 파일시스템이 초기화된 후에 호출되어야 합니다.
 pub unsafe fn init_swap(device: &'static dyn BlockDevice, start_block: u64, max_slots: u32) -> Result<(), SwapError> {
-    let mut manager = SWAP_MANAGER.lock();
-    manager.init(device, start_block, max_slots)
+    let mut guard = SWAP_MANAGER.lock();
+    if guard.is_none() { *guard = Some(SwapManager::new()); }
+    guard.as_mut().unwrap().init(device, start_block, max_slots)
 }
 
 /// 스왑 활성화 여부 확인
 pub fn is_swap_enabled() -> bool {
     let manager = SWAP_MANAGER.lock();
-    manager.is_enabled()
+    manager.as_ref().map(|m| m.is_enabled()).unwrap_or(false)
 }
 
 /// 스왑 통계 가져오기
 pub fn get_swap_stats() -> SwapStats {
     let manager = SWAP_MANAGER.lock();
-    manager.stats()
+    manager.as_ref().map(|m| m.stats()).unwrap_or(SwapStats{ swapped_pages:0, swap_in_count:0, swap_out_count:0, available_slots:0, max_slots:0 })
+}
+
+/// Try to swap in a page and return a newly allocated frame containing its data
+///
+/// Safety: memory management must be initialized.
+pub unsafe fn try_swap_in(page: Page<Size4KiB>) -> Result<PhysFrame<Size4KiB>, SwapError> {
+    let mut guard = SWAP_MANAGER.lock();
+    let manager = guard.as_mut().ok_or(SwapError::NotInitialized)?;
+    if !manager.enabled { return Err(SwapError::NotEnabled); }
+    // Allocate a frame
+    let frame = match crate::memory::frame::allocate_frame() {
+        Some(f) => f,
+        None => return Err(SwapError::IoError),
+    };
+    // Read page data from swap
+    let data = manager.swap_in(page)?;
+    // Write into the frame
+    manager.write_page_data(frame, &data)?;
+    Ok(frame)
 }
 
 /// LRU 페이지를 스왑 아웃 시도
@@ -505,7 +525,8 @@ pub fn get_swap_stats() -> SwapStats {
 /// # Safety
 /// 메모리 관리가 초기화되어 있어야 합니다.
 pub unsafe fn try_swap_out_lru() -> Result<(), SwapError> {
-    let mut manager = SWAP_MANAGER.lock();
+    let mut guard = SWAP_MANAGER.lock();
+    let manager = guard.as_mut().ok_or(SwapError::NotInitialized)?;
     
     if !manager.enabled {
         return Err(SwapError::NotEnabled);
@@ -542,7 +563,8 @@ pub unsafe fn try_swap_out_lru() -> Result<(), SwapError> {
 /// # Safety
 /// 메모리 관리가 초기화되어 있어야 합니다.
 pub unsafe fn prefetch_swap_pages(max_pages: usize) -> Result<usize, SwapError> {
-    let mut manager = SWAP_MANAGER.lock();
+    let mut guard = SWAP_MANAGER.lock();
+    let manager = guard.as_mut().ok_or(SwapError::NotInitialized)?;
     manager.prefetch_pages(max_pages)
 }
 

@@ -20,7 +20,7 @@ use spin::Mutex;
 /// 
 /// 전역 파일시스템 인스턴스를 관리합니다.
 pub struct FileSystemManager {
-    root_fs: Option<Box<dyn FileSystem>>,
+    root_fs: Option<*mut (dyn FileSystem)>,
 }
 
 impl FileSystemManager {
@@ -44,21 +44,24 @@ impl FileSystemManager {
         
         // 마운트
         fs.mount()?;
-        
-        self.root_fs = Some(Box::new(fs));
+
+        // 커널 수명으로 누수(leak)하여 전역으로 보관
+        let leaked: &'static mut (dyn FileSystem) = Box::leak(Box::new(fs));
+        self.root_fs = Some(leaked as *mut dyn FileSystem);
         Ok(())
     }
     
     /// 루트 파일시스템 가져오기
-    pub fn get_root(&mut self) -> Option<&mut dyn FileSystem> {
-        self.root_fs.as_mut().map(|fs| fs.as_mut())
+    pub fn get_root(&mut self) -> Option<&'static mut dyn FileSystem> {
+        self.root_fs.map(|p| unsafe { &mut *p })
     }
     
     /// 루트 파일시스템이 마운트되어 있는지 확인
     pub fn is_mounted(&self) -> bool {
-        self.root_fs.as_ref()
-            .map(|fs| fs.is_mounted())
-            .unwrap_or(false)
+        match self.root_fs {
+            Some(p) => unsafe { (&*p).is_mounted() },
+            None => false,
+        }
     }
 }
 

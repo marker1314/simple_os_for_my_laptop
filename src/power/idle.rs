@@ -3,6 +3,7 @@
 use spin::Mutex;
 
 /// Represents a CPU C-State
+#[derive(Clone, Copy)]
 pub struct CState {
     pub level: u8,        // e.g., 0,1,2,3,6
     pub latency_us: u32,  // estimated entry/exit latency
@@ -211,7 +212,7 @@ pub fn set_default_cstates(cstates: [Option<CState>; 8]) {
 
 /// Helper to read current default cstates (used by external callers if needed)
 pub fn get_default_cstates() -> [Option<CState>; 8] {
-    *DEFAULT_CSTATES.lock()
+    DEFAULT_CSTATES.lock().clone()
 }
 
 

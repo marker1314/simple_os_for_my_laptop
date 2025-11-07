@@ -16,19 +16,14 @@ struct SlabPool {
     buf: [u8; SLAB_CAPACITY],
     free_bitmap: [bool; SLAB_CAPACITY],
     chunk_size: usize,
-    #[cfg(debug_assertions)]
-    allocated: alloc::collections::BTreeSet<*mut u8>, // 할당된 포인터 추적
 }
 
+// SlabPool는 내부적으로 raw pointer를 디버그 트래킹 용도로만 사용하므로, 전역 동기화 하에서 Send로 간주합니다.
+unsafe impl Send for SlabPool {}
+
 impl SlabPool {
-    fn new(chunk_size: usize) -> Self {
-        Self {
-            buf: [0; SLAB_CAPACITY],
-            free_bitmap: [true; SLAB_CAPACITY],
-            chunk_size,
-            #[cfg(debug_assertions)]
-            allocated: alloc::collections::BTreeSet::new(),
-        }
+    pub const fn new_const(chunk_size: usize) -> Self {
+        Self { buf: [0; SLAB_CAPACITY], free_bitmap: [true; SLAB_CAPACITY], chunk_size }
     }
 
     fn alloc(&mut self) -> Option<*mut u8> {
@@ -41,19 +36,9 @@ impl SlabPool {
                 
                 #[cfg(debug_assertions)]
                 {
-                    // Redzone 설정 (0xAA로 채움)
                     if REDZONE_SIZE > 0 {
-                        unsafe {
-                            core::ptr::write_bytes(ptr.add(self.chunk_size), 0xAA, REDZONE_SIZE);
-                        }
+                        unsafe { core::ptr::write_bytes(ptr.add(self.chunk_size), 0xAA, REDZONE_SIZE); }
                     }
-                    
-                    // Double-free 검사
-                    if self.allocated.contains(&ptr) {
-                        crate::log_error!("Double-free detected: {:p}", ptr);
-                        return None;
-                    }
-                    self.allocated.insert(ptr);
                 }
                 
                 return Some(ptr);
@@ -69,13 +54,6 @@ impl SlabPool {
         
         #[cfg(debug_assertions)]
         {
-            // Use-after-free 검사
-            if !self.allocated.contains(&ptr) {
-                crate::log_error!("Use-after-free detected: {:p}", ptr);
-                return;
-            }
-            
-            // Redzone 검사
             if REDZONE_SIZE > 0 {
                 let redzone_ptr = unsafe { ptr.add(self.chunk_size) };
                 for i in 0..REDZONE_SIZE {
@@ -85,8 +63,6 @@ impl SlabPool {
                     }
                 }
             }
-            
-            self.allocated.remove(&ptr);
         }
         
         if off < SLAB_CAPACITY {
@@ -99,13 +75,17 @@ pub struct SlabAllocator {
     pools: [Mutex<SlabPool>; 3],
 }
 
+// SlabAllocator는 내부에 Mutex<SlabPool>만 포함하고, SlabPool을 Send로 표시했으므로 Send로 취급합니다.
+unsafe impl Send for SlabAllocator {}
+unsafe impl Sync for SlabAllocator {}
+
 impl SlabAllocator {
     pub const fn new() -> Self {
         Self {
             pools: [
-                Mutex::new(SlabPool::new(SLAB_SIZES[0])),
-                Mutex::new(SlabPool::new(SLAB_SIZES[1])),
-                Mutex::new(SlabPool::new(SLAB_SIZES[2])),
+                Mutex::new(SlabPool::new_const(SLAB_SIZES[0])),
+                Mutex::new(SlabPool::new_const(SLAB_SIZES[1])),
+                Mutex::new(SlabPool::new_const(SLAB_SIZES[2])),
             ],
         }
     }

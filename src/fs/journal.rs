@@ -141,7 +141,7 @@ impl Journal {
     /// # Arguments
     /// * `device` - 블록 디바이스 (저널 읽기용)
     /// * `journal_start_block` - 저널 영역 시작 블록
-    pub fn recover(&mut self, device: Option<&dyn BlockDevice>, journal_start_block: Option<u64>) -> Result<Vec<JournalEntry>, &'static str> {
+    pub fn recover(&mut self, device: Option<&mut dyn BlockDevice>, journal_start_block: Option<u64>) -> Result<Vec<JournalEntry>, &'static str> {
         // 디스크에서 저널 읽기
         if let (Some(dev), Some(start_block)) = (device, journal_start_block) {
             match self.read_journal_from_disk(dev, start_block) {
@@ -168,11 +168,9 @@ impl Journal {
     }
     
     /// 디스크에서 저널 읽기
-    fn read_journal_from_disk(&self, device: &dyn BlockDevice, start_block: u64) -> Result<Vec<JournalEntry>, &'static str> {
+    fn read_journal_from_disk(&self, device: &mut dyn BlockDevice, start_block: u64) -> Result<Vec<JournalEntry>, &'static str> {
         let mut header = [0u8; 512];
-        unsafe {
-            device.read_block(start_block, &mut header).map_err(|_| "Failed to read journal header")?;
-        }
+        device.read_block(start_block, &mut header).map_err(|_| "Failed to read journal header")?;
         
         // 매직 넘버 확인
         if &header[0..4] != b"JRNL" {
@@ -196,11 +194,9 @@ impl Journal {
         // 엔트리 읽기
         for _ in 0..entry_count {
             let mut entry_header = [0u8; 512];
-            unsafe {
-                device.read_block(start_block + block_offset, &mut entry_header)
-                    .map_err(|_| "Failed to read journal entry header")?;
-                block_offset += 1;
-            }
+            device.read_block(start_block + block_offset, &mut entry_header)
+                .map_err(|_| "Failed to read journal entry header")?;
+            block_offset += 1;
             
             // 블록 번호
             let block_num = u64::from_le_bytes([
@@ -223,11 +219,9 @@ impl Journal {
             
             // 데이터 읽기
             let mut data = [0u8; 512];
-            unsafe {
-                device.read_block(start_block + block_offset, &mut data)
-                    .map_err(|_| "Failed to read journal entry data")?;
-                block_offset += 1;
-            }
+            device.read_block(start_block + block_offset, &mut data)
+                .map_err(|_| "Failed to read journal entry data")?;
+            block_offset += 1;
             
             entries.push(JournalEntry {
                 block_num,
@@ -239,10 +233,8 @@ impl Journal {
         
         // 커밋 마커 확인
         let mut commit_marker = [0u8; 512];
-        unsafe {
-            device.read_block(start_block + block_offset, &mut commit_marker)
-                .map_err(|_| "Failed to read commit marker")?;
-        }
+        device.read_block(start_block + block_offset, &mut commit_marker)
+            .map_err(|_| "Failed to read commit marker")?;
         
         if &commit_marker[0..4] != b"COMM" {
             return Err("Journal commit marker not found");
@@ -290,16 +282,16 @@ pub fn add_entry(block_num: u64, data: &[u8], entry_type: JournalEntryType) -> R
 /// # Arguments
 /// * `device` - 블록 디바이스 (저널 영역에 쓰기용)
 /// * `journal_start_block` - 저널 영역 시작 블록
-pub fn commit(device: Option<&dyn BlockDevice>, journal_start_block: Option<u64>) -> Result<(), &'static str> {
-    GLOBAL_JOURNAL.lock().commit(device, journal_start_block)
+pub fn commit(_device: Option<&mut dyn BlockDevice>, _journal_start_block: Option<u64>) -> Result<(), &'static str> {
+    GLOBAL_JOURNAL.lock().commit()
 }
 
 /// 체크포인트
 /// 
 /// # Arguments
 /// * `device` - 블록 디바이스 (파일시스템에 쓰기용)
-pub fn checkpoint(device: Option<&dyn BlockDevice>) -> Result<(), &'static str> {
-    GLOBAL_JOURNAL.lock().checkpoint(device)
+pub fn checkpoint(_device: Option<&mut dyn BlockDevice>) -> Result<(), &'static str> {
+    GLOBAL_JOURNAL.lock().checkpoint()
 }
 
 /// 트랜잭션 롤백
@@ -312,7 +304,7 @@ pub fn rollback() {
 /// # Arguments
 /// * `device` - 블록 디바이스 (저널 읽기용)
 /// * `journal_start_block` - 저널 영역 시작 블록
-pub fn recover(device: Option<&dyn BlockDevice>, journal_start_block: Option<u64>) -> Result<Vec<JournalEntry>, &'static str> {
+pub fn recover(device: Option<&mut dyn BlockDevice>, journal_start_block: Option<u64>) -> Result<Vec<JournalEntry>, &'static str> {
     GLOBAL_JOURNAL.lock().recover(device, journal_start_block)
 }
 

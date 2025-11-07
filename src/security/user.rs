@@ -5,7 +5,9 @@
 use spin::Mutex;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
+use alloc::string::ToString;
 use alloc::vec::Vec;
+use alloc::vec;
 
 /// 사용자 ID 타입
 pub type UserId = u32;
@@ -167,7 +169,7 @@ impl Default for UserManager {
 }
 
 /// 전역 사용자 관리자
-static USER_MANAGER: Mutex<UserManager> = Mutex::new(UserManager::new());
+static USER_MANAGER: Mutex<Option<UserManager>> = Mutex::new(None);
 
 /// 현재 사용자 ID 가져오기
 pub fn get_current_uid() -> UserId {
@@ -184,7 +186,9 @@ pub fn get_current_gid() -> GroupId {
 }
 
 /// 사용자 관리자 가져오기
-pub fn get_user_manager() -> &'static Mutex<UserManager> {
-    &USER_MANAGER
+pub fn is_user_in_group(uid: UserId, gid: GroupId) -> bool {
+    let mut guard = USER_MANAGER.lock();
+    if guard.is_none() { *guard = Some(UserManager::new()); }
+    guard.as_ref().unwrap().is_user_in_group(uid, gid)
 }
 

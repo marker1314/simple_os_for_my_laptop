@@ -8,14 +8,13 @@
 //! 2. **연속 프레임 할당**: 연속된 프레임 할당을 우선시
 //! 3. **단편화 최소화**: 작은 프레임 블록을 병합
 
-use x86_64::structures::paging::PhysFrame;
-use x86_64::structures::paging::Size4KiB;
+use x86_64::structures::paging::{PhysFrame, Size4KiB, FrameAllocator};
 use spin::Mutex;
 use alloc::vec::Vec;
 use alloc::collections::BTreeMap;
 
 // use crate::memory::frame::allocate_frame; // 순환 참조 방지
-use crate::memory::frame::FRAME_ALLOCATOR;
+use crate::memory::frame::BootInfoFrameAllocator;
 
 /// 프레임 캐시 엔트리
 #[derive(Debug, Clone, Copy)]
@@ -130,9 +129,9 @@ pub fn allocate_frame_cached() -> Option<PhysFrame<Size4KiB>> {
     // 캐시 미스 - 일반 할당자 사용
     drop(cache);
     
-    // 프레임 할당자 직접 호출 (순환 참조 방지)
-    let mut allocator = FRAME_ALLOCATOR.lock();
-    allocator.as_mut()?.allocate_frame()
+    // 프레임 할당자 직접 생성 (전역 접근 회피)
+    let mut allocator = BootInfoFrameAllocator::new();
+    allocator.allocate_frame()
 }
 
 /// 프레임을 캐시에 추가

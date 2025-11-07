@@ -155,7 +155,26 @@ impl PowerStatistics {
     }
 }
 
-static STATS: Mutex<PowerStatistics> = Mutex::new(PowerStatistics::default());
+static STATS: Mutex<PowerStatistics> = Mutex::new(PowerStatistics {
+    avg_power_mw: 0,
+    peak_power_mw: 0,
+    energy_consumed_mj: 0,
+    p_state_histogram: [0; 16],
+    c_state_histogram: [0; 8],
+    uptime_ms: 0,
+    last_rapl_nj: None,
+    power_samples: [0; MOVING_AVG_WINDOW],
+    sample_count: 0,
+    sample_index: 0,
+    wakeup_count: 0,
+    last_wakeup_time_ms: 0,
+    current_c_state: 0,
+    current_p_state: 0,
+    c_state_entry_time_ms: 0,
+    p_state_entry_time_ms: 0,
+    c_state_residency_ms: [0; 8],
+    p_state_residency_ms: [0; 16],
+});
 
 /// 전력 통계 가져오기
 pub fn get_statistics() -> PowerStatistics {
@@ -177,8 +196,9 @@ pub fn tick(now_ms: u64) {
         }
         
         // 이동 평균 계산
-        s.power_samples[s.sample_index] = power_mw;
-        s.sample_index = (s.sample_index + 1) % MOVING_AVG_WINDOW;
+        let idx = s.sample_index;
+        s.power_samples[idx] = power_mw;
+        s.sample_index = (idx + 1) % MOVING_AVG_WINDOW;
         if s.sample_count < MOVING_AVG_WINDOW {
             s.sample_count += 1;
         }

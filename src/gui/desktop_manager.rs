@@ -88,12 +88,12 @@ impl DesktopManager {
             // 런처가 보이지 않을 때만 애플리케이션으로 이벤트 전달
             if !desktop::is_launcher_visible() {
                 for app in &mut self.running_apps {
-                    match app {
+                    let _handled = match app {
                         RunningApp::Calculator(calc) => calc.handle_mouse_event(event),
                         RunningApp::FileManager(fm) => fm.handle_mouse_event(event),
                         // 다른 앱들은 아직 handle_mouse_event를 구현하지 않음
-                        _ => {}
-                    }
+                        _ => false,
+                    };
                 }
             }
         }
